@@ -245,6 +245,8 @@ def load_schema(profile: str) -> dict[str, list[tuple[str, str]]]:
         for row in rdr:
             if not row or len(row) < 3:
                 continue
+            if row[0] == "Table" and row[1] == "Column":
+                continue  # skip header row
             t, c, ty = row[0], row[1], row[2]
             by_table.setdefault(t, []).append((c, ty or "TEXT"))
     return by_table
@@ -563,7 +565,12 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
     # lost_and_found rows
     try:
         # Grab all raw rows as tuples
-        rows = cur.execute(f"SELECT * FROM {quote_ident(LNF_TABLE)}").fetchall()
+        raw_rows = cur.execute(f"SELECT rowid, * FROM {quote_ident(LNF_TABLE)}").fetchall()
+        lf_rowids: list[int] = []
+        rows: list[tuple[Any, ...]] = []
+        for rec in raw_rows:
+            lf_rowids.append(int(rec[0]))
+            rows.append(tuple(rec[1:]))
         if not rows:
             print("No data in lost_and_found — nothing to salvage.")
             return out_db
@@ -587,8 +594,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
         for tname, cols in schema_by_table.items()
     }
 
-    mappings = []  # for the mapping CSV: (row_idx, table, score)
+    mappings = []  # for the mapping CSV: (lf_index, lf_rowid, lf_id_value, table, score)
     consumed_rows = set()  # mark L&F row indices that we've already used
+    written_tables: set[str] = set()
 
     for r_idx, row in enumerate(rows):
         if r_idx in consumed_rows:
@@ -665,11 +673,43 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
                 except sqlite3.Error:
                     continue
 
-            mappings.append((r_idx, table_name, metrics["confidence"]))
+            written_tables.add(table_name)
+            mappings.append((r_idx, lf_rowids[r_idx], lf_id_value, table_name, metrics["confidence"]))
             consumed_rows.add(r_idx)
             break  # stop scanning more start positions for this row
 
         # (If no match, leave the row for 'unmatched' CSV if you're exporting it.)
+
+    if written_tables:
+        seq_exists = dst_cur.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'"
+        ).fetchone()
+        if not seq_exists:
+            dst_cur.execute("DROP TABLE IF EXISTS _tmp_autoinc")
+            dst_cur.execute("CREATE TABLE IF NOT EXISTS _tmp_autoinc(id INTEGER PRIMARY KEY AUTOINCREMENT)")
+            dst_cur.execute("INSERT INTO _tmp_autoinc DEFAULT VALUES")
+            dst_cur.execute("DELETE FROM _tmp_autoinc")
+            dst_cur.execute("DROP TABLE _tmp_autoinc")
+            seq_exists = dst_cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'"
+            ).fetchone()
+
+        if seq_exists:
+            for table_name in sorted(written_tables):
+                schema_cols = schema_by_table.get(table_name)
+                if not schema_cols:
+                    continue
+                first_col_name = schema_cols[0][0]
+                if first_col_name != "ID":
+                    continue
+                max_id_row = dst_cur.execute(
+                    f"SELECT MAX({quote_ident(first_col_name)}) FROM {quote_ident(table_name)}"
+                ).fetchone()
+                max_id = max_id_row[0] if max_id_row and max_id_row[0] is not None else None
+                if max_id is None:
+                    continue
+                dst_cur.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table_name,))
+                dst_cur.execute("INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)", (table_name, int(max_id)))
 
     dst.commit()
     dst.close()
@@ -678,9 +718,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
     # Mapping CSV
     with map_csv.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["row_index", "table", "confidence"])
-        for r_idx, tname, score in mappings:
-            w.writerow([r_idx, tname, f"{score:.3f}"])
+        w.writerow(["lf_row_index", "lf_rowid", "lf_id_value", "table", "confidence"])
+        for lf_idx, lf_rowid, lf_id, tname, score in mappings:
+            w.writerow([lf_idx, lf_rowid, "" if lf_id is None else lf_id, tname, f"{score:.3f}"])
 
     print(f"Success: Rebuilt structured Powerlog DB -> {out_db}")
     print(f"Info: Mapping CSV -> {map_csv}")
