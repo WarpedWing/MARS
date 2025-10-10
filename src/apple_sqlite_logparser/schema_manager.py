@@ -4,13 +4,12 @@ schema_manager.py — Dynamic Powerlog schema loader
 
 Reads schema CSVs from ./Schemas/ to drive Powerlog classification/merging.
 """
-
 from __future__ import annotations
 
 import csv
 import re
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 SCHEMA_DIR = Path(__file__).parent / "Schemas"
 
