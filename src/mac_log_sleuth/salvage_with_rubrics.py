@@ -49,6 +49,8 @@ DEFAULT_EPOCH_MAX = 4102444800.0  # 2100-01-01
 
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$")
 
+FILL_RATIO_STRONG_THRESHOLD = 0.85  # columns with >=85% fill rate are treated as "dense"
+
 
 # ---------- utils ----------
 def is_null(v):
@@ -254,11 +256,19 @@ def load_rubric(profile: str) -> dict:
         return json.load(f)
 
 
-def build_expectations(schema_cols: list[tuple[str, str]]) -> dict[str, Any]:
+def build_expectations(
+    schema_cols: list[tuple[str, str]],
+    rubric_table: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     col_names = [c for c, _ in schema_cols]
     col_types = [t for _, t in schema_cols]
     roles = []
     ts_index = None
+    rubric_cols = (rubric_table or {}).get("columns", {}) if rubric_table else {}
+    col_meta: list[dict[str, Any]] = []
+    required_idxs: set[int] = set()
+    dense_idxs: set[int] = set()
+    fill_expectations: list[float | None] = []
     for idx, (cname, ctype) in enumerate(schema_cols):
         lower = cname.lower()
         if cname == "ID":
@@ -277,12 +287,27 @@ def build_expectations(schema_cols: list[tuple[str, str]]) -> dict[str, Any]:
             role = "text"
         roles.append(role)
 
+        meta = rubric_cols.get(cname, {}) if rubric_cols else {}
+        col_meta.append(meta)
+
+        if meta.get("notnull"):
+            required_idxs.add(idx)
+
+        observed_ratio = meta.get("observed_fill_ratio")
+        fill_expectations.append(observed_ratio if isinstance(observed_ratio, (int, float)) else None)
+        if isinstance(observed_ratio, (int, float)) and observed_ratio >= FILL_RATIO_STRONG_THRESHOLD:
+            dense_idxs.add(idx)
+
     return {
         "columns": col_names,
         "column_list": col_names,
         "types": col_types,
         "roles": roles,
         "ts_index": ts_index,
+        "col_meta": col_meta,
+        "required_idxs": required_idxs,
+        "dense_idxs": dense_idxs,
+        "fill_expectations": fill_expectations,
     }
 
 
@@ -309,17 +334,37 @@ def row_first_timestamp_index(row: tuple[Any, ...], epoch_lo: float, epoch_hi: f
     return None
 
 
+def _coerce_lf_id(value: Any) -> int | None:
+    """
+    Attempt to coerce a lost_and_found cell into an integer ID.
+    Accepts integers or floats that are integral after coercion.
+    """
+    kind, coerced = coerce_numeric_kind(value)
+    if kind == "int":
+        try:
+            return int(coerced)
+        except (ValueError, TypeError):
+            return None
+    if kind == "real":
+        sf = safe_float(coerced)
+        if sf is not None and float(sf).is_integer():
+            return int(float(sf))
+    return None
+
+
 def row_pick_id(row: tuple[Any, ...]) -> int | None:
-    # Prefer the known 4th column; else any first non-null integer
+    # Prefer the known 4th column; else any first convertible numeric
     try:
         v = row[LNF_ID_COL_INDEX]
-        if is_int_like(v):
-            return int(v)
+        candidate = _coerce_lf_id(v)
+        if candidate is not None:
+            return candidate
     except IndexError:
         pass
     for v in row:
-        if is_int_like(v):
-            return int(v)
+        candidate = _coerce_lf_id(v)
+        if candidate is not None:
+            return candidate
     return None
 
 
@@ -339,6 +384,8 @@ def score_segment_against_table_strict(row_vals, start_idx, table_def):
     """
     cols = table_def.get("column_list") or []
     types = table_def.get("types") or ["TEXT"] * len(cols)
+    col_meta_list = table_def.get("col_meta") or []
+    required_idxs = table_def.get("required_idxs") or set()
     n_schema = len(cols)
     if n_schema < 2:
         return False, None  # must at least have ID + timestamp or legit short table
@@ -375,12 +422,35 @@ def score_segment_against_table_strict(row_vals, start_idx, table_def):
         schema_idx = ts_schema_idx + offset
         decl = types[schema_idx]
         col_name = cols[schema_idx]
+        meta = col_meta_list[schema_idx] if schema_idx < len(col_meta_list) else {}
         if is_null(val):
-            # NULL is allowed for everything except 'timestamp' (must be epoch)
-            if "timestamp" in (col_name or "").lower():
+            # Required columns (including timestamps) must not be null.
+            if schema_idx in required_idxs or "timestamp" in (col_name or "").lower():
                 return False, None
-        elif not value_matches_declared_type(val, decl, col_name=col_name):
-            return False, None
+        else:
+            if not value_matches_declared_type(val, decl, col_name=col_name):
+                return False, None
+            hints = meta.get("hints") if isinstance(meta, dict) else None
+            if hints and "range" in hints:
+                try:
+                    lo, hi = hints["range"]
+                    fv = float(val)
+                except (ValueError, TypeError):
+                    return False, None
+                if lo is not None:
+                    try:
+                        lo_f = float(lo)
+                    except (ValueError, TypeError):
+                        return False, None
+                    if fv < lo_f:
+                        return False, None
+                if hi is not None:
+                    try:
+                        hi_f = float(hi)
+                    except (ValueError, TypeError):
+                        return False, None
+                    if fv > hi_f:
+                        return False, None
         mapped[schema_idx] = val
 
     # Everything AFTER the schema's end must be ALL NULL, or we reject
@@ -390,6 +460,39 @@ def score_segment_against_table_strict(row_vals, start_idx, table_def):
 
     # OK — caller is responsible for filling ID if present in schema
     return True, {"from_schema_index": ts_schema_idx, "mapped_values": mapped}
+
+
+def compute_match_metrics(mapped: list[Any], table_def: dict[str, Any]) -> dict[str, float]:
+    total_cols = len(mapped) or 1
+    non_null = sum(1 for v in mapped if not is_null(v))
+    non_null_ratio = non_null / total_cols
+
+    required_idxs = table_def.get("required_idxs") or set()
+    required_total = len(required_idxs)
+    required_hits = sum(
+        1
+        for idx in required_idxs
+        if idx < len(mapped) and not is_null(mapped[idx])
+    )
+    required_ratio = required_hits / required_total if required_total else 1.0
+
+    dense_idxs = table_def.get("dense_idxs") or set()
+    dense_total = len(dense_idxs)
+    dense_hits = sum(
+        1
+        for idx in dense_idxs
+        if idx < len(mapped) and not is_null(mapped[idx])
+    )
+    dense_ratio = dense_hits / dense_total if dense_total else non_null_ratio
+
+    confidence = (0.6 * required_ratio) + (0.25 * dense_ratio) + (0.15 * non_null_ratio)
+
+    return {
+        "confidence": confidence,
+        "required_ratio": required_ratio,
+        "dense_ratio": dense_ratio,
+        "non_null_ratio": non_null_ratio,
+    }
 
 
 def quick_match_id_text_real(
@@ -442,6 +545,8 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
     print(f"Using profile: {profile}")
 
     schema_by_table = load_schema(profile)
+    rubric_data = load_rubric(profile)
+    rubric_tables = rubric_data.get("tables", {}) if isinstance(rubric_data, dict) else {}
 
     salvaged_dir = recovered_path.parent / SALVAGED_DIR
     salvaged_dir.mkdir(parents=True, exist_ok=True)
@@ -477,7 +582,10 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
     dst.commit()
 
     # prepare expectations
-    tables_with_timestamp = {tname: build_expectations(cols) for tname, cols in schema_by_table.items()}
+    tables_with_timestamp = {
+        tname: build_expectations(cols, rubric_tables.get(tname))
+        for tname, cols in schema_by_table.items()
+    }
 
     mappings = []  # for the mapping CSV: (row_idx, table, score)
     consumed_rows = set()  # mark L&F row indices that we've already used
@@ -495,44 +603,55 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
         if not ts_positions:
             continue  # nothing to do with this row
 
+        lf_id_value = row_pick_id(row)
+
         for start_c in ts_positions:
-            # Try each candidate table (with a timestamp) using strict matcher
-            best_hit = None
+            # Collect matching candidates with their confidence scores
+            candidates = []
             for table_name, tbl in tables_with_timestamp.items():
                 ok, details = score_segment_against_table_strict(row, start_c, tbl)
                 if not ok:
                     continue
-                # Basic preference: earliest start wins; then longer schema
-                score = (-start_c, len(tbl.get("column_list") or []))
-                if (best_hit is None) or (score > best_hit[0]):
-                    best_hit = (score, (table_name, tbl, details))
 
-            if best_hit is None:
+                cols = tbl.get("column_list") or []
+                types = tbl.get("types") or ["TEXT"] * len(cols)
+                mapped = details["mapped_values"][:]
+
+                if cols and cols[0] == "ID":
+                    if lf_id_value is None:
+                        continue
+                    mapped[0] = lf_id_value
+
+                metrics = compute_match_metrics(mapped, tbl)
+                candidates.append(
+                    (
+                        metrics["confidence"],
+                        -start_c,
+                        len(cols),
+                        table_name,
+                        tbl,
+                        mapped,
+                        types,
+                        metrics,
+                    )
+                )
+
+            if not candidates:
                 continue
 
-            # We have a strict match → build a row aligned to schema
-            (_score, (table_name, tbl, details)) = best_hit
+            best_candidate = max(candidates, key=lambda item: (item[0], item[1], item[2]))
+            (
+                _confidence,
+                _neg_start,
+                _schema_len,
+                table_name,
+                tbl,
+                mapped,
+                types,
+                metrics,
+            ) = best_candidate
+
             cols = tbl.get("column_list") or []
-            types = tbl.get("types") or ["TEXT"] * len(cols)
-            mapped = details["mapped_values"][:]  # copy
-
-            # Fill ID from L&F's 4th column if schema's first column is ID
-            if cols and cols[0] == "ID":
-                lf_id = None
-                if len(row) > 3 and row[3] is not None:
-                    k, vv = coerce_numeric_kind(row[3])
-                    if k in ("int", "real"):
-                        try:
-                            if k == "int" or safe_float(vv):
-                                lf_id = int(safe_float(vv))
-                        except (ValueError, TypeError):
-                            pass
-                if lf_id is None:
-                    # if we cannot obtain a valid ID, reject this match
-                    continue
-                mapped[0] = lf_id
-
-            # Create table (if needed) & insert
             q_table = quote_ident(table_name)
             col_defs = ", ".join(f"{quote_ident(c)} {(t or 'TEXT')}" for c, t in zip(cols, types, strict=False))
             if table_name.lower() != "sqlite_sequence":
@@ -546,6 +665,7 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
                 except sqlite3.Error:
                     continue
 
+            mappings.append((r_idx, table_name, metrics["confidence"]))
             consumed_rows.add(r_idx)
             break  # stop scanning more start positions for this row
 

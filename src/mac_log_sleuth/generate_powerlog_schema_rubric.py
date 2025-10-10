@@ -159,6 +159,13 @@ def main():
 
             # examples only (never constraints)
             sample_rows = sample_table_info(conn, tname, limit=200)
+            sample_count = len(sample_rows)
+            non_null_counts = [0] * len(cols)
+            if sample_count:
+                for row in sample_rows:
+                    for idx in range(min(len(row), len(cols))):
+                        if row[idx] is not None:
+                            non_null_counts[idx] += 1
 
             columns_list = []
             types_list = []
@@ -168,11 +175,24 @@ def main():
                 columns_list.append(col_name)
                 types_list.append(safe_type(col_type) or "TEXT")
 
+                declared_notnull = bool(notnull)
+                observed_non_null = non_null_counts[idx] if sample_count else 0
+                observed_fill_ratio = (
+                    observed_non_null / sample_count if sample_count else None
+                )
+                observed_notnull = bool(sample_count and observed_non_null == sample_count)
+                effective_notnull = declared_notnull or observed_notnull
+
                 cinfo = {
                     "type": safe_type(col_type),
-                    "notnull": bool(notnull),
+                    "notnull": effective_notnull,
+                    "declared_notnull": declared_notnull,
+                    "observed_non_null": observed_non_null if sample_count else 0,
+                    "observed_total": sample_count,
                     "primary_key": bool(pk)
                 }
+                if observed_fill_ratio is not None:
+                    cinfo["observed_fill_ratio"] = round(observed_fill_ratio, 5)
 
                 if col_name == "ID":
                     cinfo["role"] = "id"
