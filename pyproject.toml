@@ -1,7 +1,20 @@
 [project]
 name = "MacLogSleuth"
 version = "0.1.0"
-description = "Add your description here"
+description = "..."
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "kaleido>=1.1.0",
+    "plotly>=6.3.1",
+]
+
+[project.optional-dependencies]
+plotly = [
+    "pandas>=2.3.3",
+]
+
+[dependency-groups]
+dev = [
+    "pandas>=2.3.3",
+]
