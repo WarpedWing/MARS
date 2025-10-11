@@ -27,7 +27,7 @@ Notes
 import argparse
 import sqlite3
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -402,6 +402,361 @@ def ensure_outdir(path: Path) -> Path:
     return path
 
 
+def prompt_series_selection(
+    tnames: list[str], graphable_map: dict[str, list[str]], max_series: int = 5
+) -> list[tuple[str, str]]:
+    """Interactive selector for up to `max_series` (table, column) pairs.
+
+    After the first pick, stays on the same table. Type 'b' to choose a new table,
+    press Enter to finish (once at least one series selected), or 'q' to quit.
+    """
+
+    selections: list[tuple[str, str]] = []
+    current_table: str | None = None
+    print(
+        "Select up to "
+        f"{max_series} series. Type 'q' to quit at any prompt, 'b' to choose a new table,"
+        " and press Enter to finish once you have what you need."
+    )
+
+    while len(selections) < max_series:
+        if current_table is None:
+            # Prompt for table
+            print("\nTables with graphable columns:")
+            for i, t in enumerate(tnames, 1):
+                cols = graphable_map.get(t, [])
+                if cols:
+                    print(f"  {i}. {t}")
+                else:
+                    print(f"  {i}. {C.FG.GRAY}{t} (no numeric columns){C.RESET}")
+            tbl_input = input("> ").strip()
+            if tbl_input.lower() == "q":
+                sys.exit(0)
+            if tbl_input == "" and selections:
+                break
+            table: str | None = None
+            if tbl_input.isdigit():
+                idx = int(tbl_input)
+                if 1 <= idx <= len(tnames):
+                    table = tnames[idx - 1]
+            if table is None:
+                for t in tnames:
+                    if tbl_input.lower() == t.lower():
+                        table = t
+                        break
+            if not table or not graphable_map.get(table):
+                cwarn("Please enter a valid table index/name.")
+                continue
+            current_table = table
+
+        # Column selection for current table
+        available = [
+            c
+            for c in graphable_map[current_table]
+            if (current_table, c) not in selections
+        ]
+        if not available:
+            cwarn(
+                "No additional columns available in this table; choose another table."
+            )
+            current_table = None
+            continue
+
+        print(f"\nColumns in {current_table} (Enter=finish, 'b'=back, 'q'=quit):")
+        for i, c in enumerate(available, 1):
+            print(f"  {i}. {c}")
+        col_input = input("> ").strip()
+        if col_input.lower() == "q":
+            sys.exit(0)
+        if col_input == "":
+            if selections:
+                break
+            cwarn("Select at least one column before finishing.")
+            continue
+        if col_input.lower() == "b":
+            current_table = None
+            continue
+
+        column: str | None = None
+        if col_input.isdigit():
+            idx = int(col_input)
+            if 1 <= idx <= len(available):
+                column = available[idx - 1]
+        else:
+            for c in available:
+                if col_input.lower() == c.lower():
+                    column = c
+                    break
+        if not column:
+            cwarn("Please pick a valid column.")
+            continue
+
+        selections.append((current_table, column))
+        print("Current selection:")
+        for i, (t, c) in enumerate(selections, 1):
+            print(f"  {i}. {t} · {c}")
+        if len(selections) >= max_series:
+            cinfo(f"Reached the current limit of {max_series} series.")
+            break
+
+    return selections
+
+
+def prompt_chart_type_for_selection(count: int) -> str:
+    """Offer chart types with contextual disabling based on series count.
+    Returns one of: 'line-overlay', 'line-stacked', 'scatter', 'bar'.
+    """
+    base = [
+        ("line-overlay", None),
+        ("line-stacked", None),
+        ("scatter", None),
+        ("bar", None),
+    ]
+    disabled: dict[str, str] = {}
+    if count > 1:
+        disabled["bar"] = "(1 datatype max)"
+    if count > 2:
+        disabled["line-overlay"] = "(max 2)"
+        disabled["scatter"] = "(max 2)"
+
+    # Compose options with labels
+    options: list[str] = []
+    disabled_set: set[str] = set()
+    for key, _ in base:
+        if key in disabled:
+            label = {
+                "line-overlay": f"overlay line {disabled[key]}",
+                "line-stacked": "stacked line",
+                "scatter": f"scatter {disabled[key]}",
+                "bar": f"bar {disabled[key]}",
+            }[key]
+            options.append(label)
+            disabled_set.add(label)
+        else:
+            label = {
+                "line-overlay": "overlay line",
+                "line-stacked": "stacked line",
+                "scatter": "scatter",
+                "bar": "bar",
+            }[key]
+            options.append(label)
+
+    # Map label back to key
+    label_to_key = {
+        "overlay line": "line-overlay",
+        "stacked line": "line-stacked",
+        "scatter": "scatter",
+        "bar": "bar",
+    }
+    # For disabled labels, keep same mapping
+    for k, v in list(label_to_key.items()):
+        if k + " (1 datatype max)" in options:
+            label_to_key[k + " (1 datatype max)"] = v
+        if k + " (max 2)" in options:
+            label_to_key[k + " (max 2)"] = v
+
+    choice = prompt_choice_with_disabled("\nChart type:", options, disabled_set)
+    return label_to_key[choice]
+
+
+def prompt_epoch_window() -> tuple[float | None, float | None]:
+    """Prompt for optional start/end times."""
+    epoch_window: tuple[float | None, float | None] = (None, None)
+    if prompt_yes_no("Do you want to restrict to a time window?", default=False):
+        cinfo("(Times are optional; press Enter to skip.)")
+        start_epoch = prompt_optional_time("Start time")
+        end_epoch = prompt_optional_time("End time")
+        if (
+            (start_epoch is not None)
+            and (end_epoch is not None)
+            and (end_epoch < start_epoch)
+        ):
+            cwarn("End is before start; swapping.")
+            start_epoch, end_epoch = end_epoch, start_epoch
+        epoch_window = (start_epoch, end_epoch)
+    return epoch_window
+
+
+def build_union_dataset(
+    conn: sqlite3.Connection,
+    selections: list[tuple[str, str]],
+    ts_col_map: dict[str, str],
+    epoch_window: tuple[float | None, float | None] | None,
+) -> tuple[list[float], dict[str, list[float | None]]]:
+    """Fetch each (table, column) and align by global timestamps."""
+    series_data: list[tuple[str, list[float], list[float | None]]] = []
+    all_ts: set[float] = set()
+    for table, column in selections:
+        xs, ys = fetch_series(conn, table, ts_col_map[table], [column], epoch_window)
+        if not xs:
+            continue
+        label = f"{table} · {column}"
+        values = ys.get(column, [])
+        series_data.append((label, xs, values))
+        all_ts.update(xs)
+    union_x = sorted(all_ts)
+    if not union_x:
+        return [], {}
+    union_series: dict[str, list[float | None]] = {}
+    for label, xs, values in series_data:
+        lookup = dict(zip(xs, values))
+        union_series[label] = [lookup.get(x) for x in union_x]
+    return union_x, union_series
+
+
+def create_overlay_figure(
+    xs: list[float],
+    ys: dict[str, list[float | None]],
+    style: str,
+    tzmode: str,
+    offset_minutes: int,
+    step_for_binary: bool,
+    title: str,
+) -> go.Figure:
+    labels = list(ys.keys())
+    x_dt = [human_time_from_epoch(x, tzmode, offset_minutes) for x in xs]
+    fig = go.Figure()
+
+    if not labels:
+        return fig
+
+    primary = labels[0]
+    primary_data = ys[primary]
+    if style == "line":
+        shape1 = (
+            "hv" if (step_for_binary and is_binary_series(primary_data)) else "linear"
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x_dt,
+                y=primary_data,
+                mode="lines+markers",
+                name=primary,
+                yaxis="y1",
+                line_shape=shape1,
+            )
+        )
+    elif style == "scatter":
+        fig.add_trace(
+            go.Scatter(x=x_dt, y=primary_data, mode="markers", name=primary, yaxis="y1")
+        )
+    elif style == "bar":
+        fig.add_trace(
+            go.Bar(x=x_dt, y=primary_data, name=primary, yaxis="y1", opacity=0.75)
+        )
+
+    if len(labels) >= 2:
+        secondary = labels[1]
+        secondary_data = ys[secondary]
+        if style == "line":
+            shape2 = (
+                "hv"
+                if (step_for_binary and is_binary_series(secondary_data))
+                else "linear"
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_dt,
+                    y=secondary_data,
+                    mode="lines+markers",
+                    name=secondary,
+                    yaxis="y2",
+                    line_shape=shape2,
+                )
+            )
+        elif style == "scatter":
+            fig.add_trace(
+                go.Scatter(
+                    x=x_dt,
+                    y=secondary_data,
+                    mode="markers",
+                    name=secondary,
+                    yaxis="y2",
+                )
+            )
+        elif style == "bar":
+            fig.add_trace(
+                go.Bar(
+                    x=x_dt,
+                    y=secondary_data,
+                    name=secondary,
+                    yaxis="y1",
+                    opacity=0.55,
+                )
+            )
+
+    fig.update_layout(
+        title=title,
+        xaxis={
+            "title": "Time",
+            "showgrid": True,
+            "zeroline": False,
+            "automargin": True,
+        },
+        yaxis={
+            "title": labels[0],
+            "showgrid": True,
+            "zeroline": False,
+            "automargin": True,
+        },
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.15,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+        margin={"l": 60, "r": 60, "t": 70, "b": 100},
+        height=600,
+    )
+
+    if len(labels) >= 2 and style != "bar":
+        fig.update_layout(
+            yaxis2={
+                "title": labels[1],
+                "overlaying": "y",
+                "side": "right",
+                "automargin": True,
+                "showgrid": False,
+                "zeroline": False,
+            }
+        )
+    elif len(labels) >= 2 and style == "bar":
+        fig.update_layout(
+            yaxis2={
+                "title": labels[1],
+                "overlaying": "y",
+                "side": "right",
+                "matches": "y",
+                "automargin": True,
+                "showgrid": False,
+                "zeroline": False,
+            }
+        )
+        fig.update_layout(barmode="group")
+
+    tzlabel = {
+        "LOCAL": "Local time",
+        "UTC": "UTC",
+        "OFFSET": f"UTC{offset_minutes:+d}m",
+    }.get(tzmode, "Local time")
+    fig.update_layout(
+        annotations=[
+            {
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0,
+                "y": -0.28,
+                "text": f"X-axis: {tzlabel}. Data plotted as acquired from Powerlog.",
+                "showarrow": False,
+                "font": {"size": 11},
+            }
+        ]
+    )
+
+    return fig
+
+
 def is_binary_series(values: Iterable[float | None]) -> bool:
     """True if non-null values are a subset of {0,1}."""
     found = set()
@@ -498,6 +853,97 @@ def fetch_series(
                 except Exception:
                     ys[col].append(None)
     return xs, ys
+
+
+def render_stacked_lines(
+    outdir: Path,
+    base_title: str,
+    tzmode: str,
+    offset_minutes: int,
+    panels: list[dict],  # each: {label:str, xs:list[float], ys:list[float|None]}
+    step_for_binary: bool = True,
+    smooth_window: int = 1,
+) -> Path:
+    """
+    Render stacked line panels (1 per series). Each panel is independent and
+    shares the time axis. Returns HTML path. PNG export handled by caller.
+    """
+    if not panels:
+        raise ValueError("No panels to plot.")
+
+    # Pre-process and convert times
+    rows = len(panels)
+    fig = make_subplots(
+        rows=rows,
+        cols=1,
+        shared_xaxes=False,  # show date ticks on every panel
+        vertical_spacing=0.06,
+        subplot_titles=tuple(p["label"] for p in panels),
+    )
+    for i, p in enumerate(panels, start=1):
+        xs = p.get("xs", [])
+        ys = p.get("ys", [])
+        # optional smoothing (skip booleans)
+        is_bool = is_binary_series(ys)
+        yplot = (
+            ys
+            if (is_bool or smooth_window <= 1)
+            else rolling_mean(list(ys), smooth_window)
+        )
+        x_dt = [human_time_from_epoch(x, tzmode, offset_minutes) for x in xs]
+        shape = "hv" if (step_for_binary and is_bool) else "linear"
+        fig.add_trace(
+            go.Scatter(
+                x=x_dt,
+                y=yplot,
+                mode="lines+markers",
+                name=p["label"],
+                line_shape=shape,
+            ),
+            row=i,
+            col=1,
+        )
+        # No y-axis title to avoid long vertical labels; titles are in subplot headers
+        # Ensure each panel shows its own time ticks
+        fig.update_xaxes(showticklabels=True, row=i, col=1, automargin=True)
+
+    # Layout and footer
+    fig.update_layout(
+        title=f"{base_title} — Stacked Lines ({rows})",
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.15,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+        margin={"l": 60, "r": 60, "t": 70, "b": 100},
+        height=max(600, 350 + 220 * (rows - 1)),
+    )
+    tzlabel = {
+        "LOCAL": "Local time",
+        "UTC": "UTC",
+        "OFFSET": f"UTC{offset_minutes:+d}m",
+    }.get(tzmode, "Local time")
+    fig.update_layout(
+        annotations=[
+            {
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0,
+                "y": -0.28,
+                "text": f"X-axis: {tzlabel}. Data plotted as acquired from Powerlog.",
+                "showarrow": False,
+                "font": {"size": 11},
+            }
+        ]
+    )
+
+    outdir = ensure_outdir(outdir)
+    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    html_path = outdir / f"stacked.{rows}.{ts}.html"
+    fig.write_html(str(html_path), include_plotlyjs="cdn", full_html=True)
+    return html_path
 
 
 def render_plot_html(
@@ -885,476 +1331,40 @@ def maybe_export_png(html_path: Path, fig_callback) -> Path | None:
 def repl(db_path: Path, outdir: Path):
     chead("Powerlog Plotter (interactive)")
     cinfo(f"Database: {db_path}")
+    cinfo("Series selection: type 'q' to quit, 'b' to change tables, Enter to finish.")
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
-        # Step 1: list available tables
         tables = detect_tables_with_timestamp(conn)
         if not tables:
             cerr("No tables with 'timestamp' and data found.")
             return
 
-        # Precompute graphable columns per table (exclude all-null)
         tnames = [t for (t, _) in tables]
         graphable_map: dict[str, list[str]] = {}
+        ts_col_map: dict[str, str] = {}
         for t, col_pairs in tables:
             cols = list_graphable_columns(col_pairs)
             cols = filter_columns_with_non_null(conn, t, cols)
             graphable_map[t] = cols
-
-        print("\nAvailable tables with timestamp & data:")
-        for i, t in enumerate(tnames, 1):
-            cols = graphable_map.get(t, [])
-            if cols:
-                print(f"  {i}. {t}")
-            else:
-                print(f"  {i}. {C.FG.GRAY}{t} (no numeric columns){C.RESET}")
+            ts_col_map[t] = next(
+                (c for c, _ in col_pairs if c.lower() == "timestamp"), "timestamp"
+            )
 
         if not any(graphable_map.get(t) for t in tnames):
             cerr("Found tables with 'timestamp' but none have numeric columns to plot.")
             return
 
-        # Pick a graphable table; keep prompting if not
-        table: str | None = None
+        selections = prompt_series_selection(tnames, graphable_map, max_series=5)
+        if not selections:
+            cerr("No series selected.")
+            return
+
+        epoch_window = prompt_epoch_window()
+
         while True:
-            sel = input("\nSelect table (number or exact name): ").strip()
-            table = None
-            if sel.isdigit():
-                idx = int(sel)
-                if 1 <= idx <= len(tnames):
-                    table = tnames[idx - 1]
-            if table is None:
-                for t in tnames:
-                    if sel.lower() == t.lower():
-                        table = t
-                        break
-            if not table:
-                cerr("Invalid table selection. Try again.")
-                continue
-            if not graphable_map.get(table):
-                cwarn(
-                    "That table has no numeric columns to plot. Choose another table."
-                )
-                continue
-            break
+            chart_key = prompt_chart_type_for_selection(len(selections))
 
-        # Columns
-        col_pairs = next(cols for (t, cols) in tables if t == table)
-        ts_col = next((c for c, ty in col_pairs if c.lower() == "timestamp"), None)
-        if not ts_col:
-            cerr("Internal error: no timestamp column found.")
-            return
-
-        graphable = graphable_map[table]
-        if not graphable:
-            cerr("No numeric columns available to graph in this table.")
-            # Shouldn't happen due to earlier checks, but guard anyway
-            return
-
-        # Tell user timestamp is always X
-        print("\nTimestamp is always X-axis.")
-        print("Select the primary Y-axis column:")
-        for i, c in enumerate(graphable, 1):
-            print(f"  {i}. {c}")
-        sel = input("> ").strip()
-        y1 = None
-        if sel.isdigit():
-            idx = int(sel)
-            if 1 <= idx <= len(graphable):
-                y1 = graphable[idx - 1]
-        else:
-            for c in graphable:
-                if sel.lower() == c.lower():
-                    y1 = c
-                    break
-        if not y1:
-            cerr("Invalid selection for primary Y-axis.")
-            return
-
-        y2 = None
-        if prompt_yes_no("Add a secondary Y-axis column?", default=False):
-            if len(graphable) <= 1:
-                cwarn("No second numeric column available.")
-            else:
-                y2 = prompt_choice_with_disabled(
-                    "Select the secondary Y-axis column:", graphable, {y1}
-                )
-
-        # Time window (optional)
-        # type: tuple[Optional[float], Optional[float]]
-        epoch_window = (None, None)
-        if prompt_yes_no("Do you want to restrict to a time window?", default=False):
-            cinfo("(Time is optional.)")
-            start_epoch = prompt_optional_time("Start time")
-            end_epoch = prompt_optional_time("End time")
-            if (
-                (start_epoch is not None)
-                and (end_epoch is not None)
-                and (end_epoch < start_epoch)
-            ):
-                cwarn("End is before start; swapping.")
-                start_epoch, end_epoch = end_epoch, start_epoch
-            epoch_window = (start_epoch, end_epoch)
-
-        # Chart type
-        options = ["line", "scatter", "bar"]
-        if y2:
-            cinfo(
-                "Note: 'bar' is single-series only; disabled when two columns are selected."
-            )
-            style = prompt_choice_with_disabled(
-                "\nSelect chart type:", options, {"bar"}
-            )
-        else:
-            style = prompt_choice("\nSelect chart type:", options)
-        bar_mode = "group"
-        line_layout = "overlay"
-        if style == "bar":
-            # Only one series allowed; already enforced by disabling bar when y2 chosen
-            bar_mode = prompt_choice(
-                "Bar layout:", ["side-by-side", "overlay"]
-            ).replace("side-by-side", "group")
-        elif style == "line" and y2:
-            line_layout = prompt_choice("Line layout:", ["overlay", "stacked"]).lower()
-        # scatter: no trendline (disabled)
-
-        # Timestamp display format
-        tzmode = prompt_choice("\nTimestamp display:", ["LOCAL", "UTC", "OFFSET"])
-        offset_minutes = 0
-        if tzmode == "OFFSET":
-            print("Enter offset in minutes (e.g., -300 for UTC-5, 120 for UTC+2):")
-            while True:
-                s = input("> ").strip()
-                if s and (s.lstrip("+-").isdigit()):
-                    offset_minutes = int(s)
-                    break
-                cwarn("Please enter an integer number of minutes (e.g., -300, 0, 60).")
-
-        # Optional smoothing for line/scatter
-        smooth_window = 1
-        if style in ("line", "scatter") and prompt_yes_no(
-            "Apply rolling-mean smoothing?", default=False
-        ):
-            print("Window size (number of points, e.g., 3, 5, 10). 1 = none")
-            while True:
-                s = input("> ").strip()
-                if s.isdigit() and int(s) >= 1:
-                    smooth_window = int(s)
-                    break
-                cwarn("Enter a positive integer (e.g., 3, 5, 10).")
-
-        # Line shape for boolean series: always use step-lines (no prompt)
-        step_for_binary = True
-
-        # Fetch and render
-        y_cols = [y1] + ([y2] if y2 else [])
-        xs, ys = fetch_series(conn, table, ts_col, y_cols, epoch_window)
-        if not xs:
-            cerr("No data points matched the selection/time window.")
-            return
-
-        title = Path(db_path).stem
-        html_path = render_plot_html(
-            outdir=outdir,
-            base_title=title,
-            table=table,
-            tzmode=tzmode,
-            offset_minutes=offset_minutes,
-            xs=xs,
-            ys=ys,
-            style=style,
-            y2_col=y2,
-            bar_mode=bar_mode,
-            smooth_window=smooth_window,
-            step_for_binary=step_for_binary,
-            line_layout=line_layout,
-        )
-        try:
-            cgood(f"HTML written: {html_path.resolve()}")
-        except Exception:
-            cgood(f"HTML written: {html_path}")
-
-        # Re-create figure for PNG export only if user asks
-        def fig_factory():
-            # build the same figure again deterministically
-            # This mirrors render_plot_html (without writing HTML)
-            xs_used, ys_used, width_ms = (
-                bin_time_series(xs, ys, target_bars=120)
-                if style == "bar"
-                else (xs, ys, 0.0)
-            )
-            # Detect boolean series on original values
-            binary_map = {k: is_binary_series(ys[k]) for k in ys}
-            # smoothing (same as HTML; skip boolean series)
-            if style != "bar" and smooth_window and smooth_window > 1:
-                ys_used = {
-                    k: (
-                        v
-                        if binary_map.get(k, False)
-                        else rolling_mean(v, smooth_window)
-                    )
-                    for k, v in ys_used.items()
-                }
-            x_dt = [human_time_from_epoch(x, tzmode, offset_minutes) for x in xs_used]
-            fig = go.Figure()
-            series = list(ys_used.keys())
-            y1name = series[0]
-
-            # Primary series
-            if style == "line":
-                shape1 = (
-                    "hv"
-                    if (step_for_binary and binary_map.get(y1name, False))
-                    else "linear"
-                )
-                if line_layout.startswith("stack") and y2:
-                    fig = make_subplots(
-                        rows=2,
-                        cols=1,
-                        shared_xaxes=True,
-                        vertical_spacing=0.07,
-                        subplot_titles=(y1name, y2),
-                    )
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x_dt,
-                            y=ys_used[y1name],
-                            mode="lines+markers",
-                            name=y1name,
-                            line_shape=shape1,
-                        ),
-                        row=1,
-                        col=1,
-                    )
-                else:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x_dt,
-                            y=ys_used[y1name],
-                            mode="lines+markers",
-                            name=y1name,
-                            yaxis="y1",
-                            line_shape=shape1,
-                        )
-                    )
-            elif style == "scatter":
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_dt,
-                        y=ys_used[y1name],
-                        mode="markers",
-                        name=y1name,
-                        yaxis="y1",
-                    )
-                )
-            elif style == "bar":
-                fig.add_trace(
-                    go.Bar(
-                        x=x_dt,
-                        y=ys_used[y1name],
-                        name=y1name,
-                        yaxis="y1",
-                        width=width_ms if width_ms > 0 else None,
-                        opacity=0.75,
-                    )
-                )
-
-            # Optional secondary series
-            y2name = series[1] if len(series) >= 2 else None
-            y2_on_y2_axis = y2name and (
-                style != "bar" or bar_mode.lower().startswith("over")
-            )
-
-            if y2name:
-                y2_axis = "y2" if y2_on_y2_axis else "y1"
-                if style == "line":
-                    shape2 = (
-                        "hv"
-                        if (step_for_binary and binary_map.get(y2name, False))
-                        else "linear"
-                    )
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x_dt,
-                            y=ys_used[y2name],
-                            mode="lines+markers",
-                            name=y2name,
-                            yaxis=y2_axis,
-                            line_shape=shape2,
-                        )
-                    )
-                elif style == "scatter":
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x_dt,
-                            y=ys_used[y2name],
-                            mode="markers",
-                            name=y2name,
-                            yaxis=y2_axis,
-                        )
-                    )
-                elif style == "bar":
-                    fig.add_trace(
-                        go.Bar(
-                            x=x_dt,
-                            y=ys_used[y2name],
-                            name=y2name,
-                            yaxis=y2_axis,
-                            width=width_ms if width_ms > 0 else None,
-                            opacity=0.55,
-                        )
-                    )
-
-            # Layout
-            title_str = f"{title} · {table} — {y1name}"
-            if y2name:
-                title_str += f" vs {y2name}"
-            fig.update_layout(
-                title=title_str,
-                xaxis={
-                    "title": "Time",
-                    "showgrid": True,
-                    "zeroline": False,
-                    "automargin": True,
-                },
-                yaxis={
-                    "title": y1name,
-                    "showgrid": True,
-                    "zeroline": False,
-                    "automargin": True,
-                },
-                legend={
-                    "orientation": "h",
-                    "yanchor": "top",
-                    "y": -0.15,
-                    "xanchor": "center",
-                    "x": 0.5,
-                },
-                margin={"l": 60, "r": 60, "t": 70, "b": 100},
-                height=600,
-                annotations=[
-                    {
-                        "xref": "paper",
-                        "yref": "paper",
-                        "x": 0,
-                        "y": -0.28,
-                        "text": "Re-rendered for PNG export.",
-                        "showarrow": False,
-                        "font": {"size": 11},
-                    }
-                ],
-            )
-
-            if y2_on_y2_axis:
-                fig.update_layout(
-                    yaxis2={
-                        "title": y2name,
-                        "overlaying": "y",
-                        "side": "right",
-                        "automargin": True,
-                        "showgrid": False,
-                        "zeroline": False,
-                    }
-                )
-            elif y2name and style == "bar":
-                # Grouped bars: show a matched right axis for labeling/ticks
-                fig.update_layout(
-                    yaxis2={
-                        "title": y2name,
-                        "overlaying": "y",
-                        "side": "right",
-                        "matches": "y",
-                        "automargin": True,
-                        "showgrid": False,
-                        "zeroline": False,
-                    }
-                )
-
-            if style == "bar":
-                fig.update_layout(
-                    barmode=("overlay" if bar_mode.startswith("overlay") else "group")
-                )
-
-            return fig
-
-        # Disable PNG export for stacked line layout
-        allow_png = not (style == "line" and y2 and line_layout.startswith("stack"))
-        if allow_png:
-            png_path = maybe_export_png(html_path, fig_factory)
-            if png_path:
-                try:
-                    cgood(f"PNG written:  {png_path.resolve()}")
-                except Exception:
-                    cgood(f"PNG written:  {png_path}")
-        else:
-            cinfo("PNG export disabled for stacked line layout (HTML only).")
-
-        # Offer to generate another chart for easier testing
-        while prompt_yes_no("Create another graph?", default=False):
-            # Reuse time window or pick a new one
-            if not prompt_yes_no("Reuse the same time window?", default=True):
-                cinfo("(Time is optional.)")
-                start_epoch = prompt_optional_time("Start time")
-                end_epoch = prompt_optional_time("End time")
-                if (
-                    (start_epoch is not None)
-                    and (end_epoch is not None)
-                    and (end_epoch < start_epoch)
-                ):
-                    cwarn("End is before start; swapping.")
-                    start_epoch, end_epoch = end_epoch, start_epoch
-                epoch_window = (start_epoch, end_epoch)
-
-            # Optionally change columns
-            if prompt_yes_no("Change columns?", default=False):
-                # Primary
-                print("Select the primary Y-axis column:")
-                for i, c in enumerate(graphable, 1):
-                    print(f"  {i}. {c}")
-                sel = input("> ").strip()
-                if sel.isdigit():
-                    idx = int(sel)
-                    if 1 <= idx <= len(graphable):
-                        y1 = graphable[idx - 1]
-                else:
-                    for c in graphable:
-                        if sel.lower() == c.lower():
-                            y1 = c
-                            break
-                # Secondary
-                y2 = None
-                if prompt_yes_no("Add a secondary Y-axis column?", default=False):
-                    if len(graphable) <= 1:
-                        cwarn("No second numeric column available.")
-                    else:
-                        y2 = prompt_choice_with_disabled(
-                            "Select the secondary Y-axis column:", graphable, {y1}
-                        )
-
-            # Chart type and layout
-            options = ["line", "scatter", "bar"]
-            if y2:
-                cinfo(
-                    "Note: 'bar' is single-series only; disabled when two columns are selected."
-                )
-                style = prompt_choice_with_disabled(
-                    "\nSelect chart type:", options, {"bar"}
-                )
-            else:
-                style = prompt_choice("\nSelect chart type:", options)
-            bar_mode = "group"
-            line_layout = "overlay"
-            if style == "bar":
-                bar_mode = prompt_choice(
-                    "Bar layout:", ["side-by-side", "overlay"]
-                ).replace("side-by-side", "group")
-            elif style == "line" and y2:
-                line_layout = prompt_choice(
-                    "Line layout:", ["overlay", "stacked"]
-                ).lower()
-            # scatter: no trendline (disabled)
-
-            # Timestamp display format
             tzmode = prompt_choice("\nTimestamp display:", ["LOCAL", "UTC", "OFFSET"])
             offset_minutes = 0
             if tzmode == "OFFSET":
@@ -1368,11 +1378,12 @@ def repl(db_path: Path, outdir: Path):
                         "Please enter an integer number of minutes (e.g., -300, 0, 60)."
                     )
 
-            # Optional smoothing for line/scatter
             smooth_window = 1
-            if style in ("line", "scatter") and prompt_yes_no(
-                "Apply rolling-mean smoothing?", default=False
-            ):
+            if chart_key in (
+                "line-overlay",
+                "line-stacked",
+                "scatter",
+            ) and prompt_yes_no("Apply rolling-mean smoothing?", default=False):
                 print("Window size (number of points, e.g., 3, 5, 10). 1 = none")
                 while True:
                     s = input("> ").strip()
@@ -1381,232 +1392,108 @@ def repl(db_path: Path, outdir: Path):
                         break
                     cwarn("Enter a positive integer (e.g., 3, 5, 10).")
 
-            # Binary series use step lines automatically
             step_for_binary = True
+            title = Path(db_path).stem
 
-            # Fetch and render
-            y_cols = [y1] + ([y2] if y2 else [])
-            xs, ys = fetch_series(conn, table, ts_col, y_cols, epoch_window)
-            if not xs:
-                cerr("No data points matched the selection/time window.")
-                break
+            allow_png = True
+            fig_factory: Callable[[], go.Figure] | None = None
 
-            html_path = render_plot_html(
-                outdir=outdir,
-                base_title=title,
-                table=table,
-                tzmode=tzmode,
-                offset_minutes=offset_minutes,
-                xs=xs,
-                ys=ys,
-                style=style,
-                y2_col=y2,
-                bar_mode=bar_mode,
-                smooth_window=smooth_window,
-                step_for_binary=step_for_binary,
-                line_layout=line_layout,
-            )
+            if chart_key == "line-stacked":
+                panels = []
+                for tbl, col in selections:
+                    xs_s, ys_s = fetch_series(
+                        conn, tbl, ts_col_map[tbl], [col], epoch_window
+                    )
+                    if not xs_s:
+                        continue
+                    panels.append(
+                        {"label": f"{tbl} · {col}", "xs": xs_s, "ys": list(ys_s[col])}
+                    )
+                if not panels:
+                    cerr("No data points matched the selection/time window.")
+                    return
+                html_path = render_stacked_lines(
+                    outdir=outdir,
+                    base_title=title,
+                    tzmode=tzmode,
+                    offset_minutes=offset_minutes,
+                    panels=panels,
+                    step_for_binary=step_for_binary,
+                    smooth_window=smooth_window,
+                )
+                allow_png = False
+            else:
+                xs_union, ys_union = build_union_dataset(
+                    conn, selections, ts_col_map, epoch_window
+                )
+                if not xs_union:
+                    cerr("No data points matched the selection/time window.")
+                    return
+                style = (
+                    "line"
+                    if chart_key == "line-overlay"
+                    else ("scatter" if chart_key == "scatter" else "bar")
+                )
+                labels = list(ys_union.keys())
+                table_title = selections[0][0] if len(selections) == 1 else "Combined"
+                y2_col = labels[1] if len(labels) >= 2 else None
+                html_path = render_plot_html(
+                    outdir=outdir,
+                    base_title=title,
+                    table=table_title,
+                    tzmode=tzmode,
+                    offset_minutes=offset_minutes,
+                    xs=xs_union,
+                    ys=ys_union,
+                    style=style,
+                    y2_col=y2_col,
+                    bar_mode="group",
+                    smooth_window=smooth_window,
+                    step_for_binary=step_for_binary,
+                    line_layout="overlay",
+                )
+
+                def fig_factory(
+                    xs=xs_union, ys=ys_union, st=style, table_name=table_title
+                ):
+                    return create_overlay_figure(
+                        xs,
+                        ys,
+                        st,
+                        tzmode,
+                        offset_minutes,
+                        step_for_binary,
+                        f"{title} — {table_name}",
+                    )
+
             try:
                 cgood(f"HTML written: {html_path.resolve()}")
             except Exception:
                 cgood(f"HTML written: {html_path}")
 
-            def fig_factory_again():
-                xs_used, ys_used, width_ms = (
-                    bin_time_series(xs, ys, target_bars=120)
-                    if style == "bar"
-                    else (xs, ys, 0.0)
-                )
-                binary_map = {k: is_binary_series(ys[k]) for k in ys}
-                if style != "bar" and smooth_window and smooth_window > 1:
-                    ys_used = {
-                        k: (
-                            v
-                            if binary_map.get(k, False)
-                            else rolling_mean(v, smooth_window)
-                        )
-                        for k, v in ys_used.items()
-                    }
-                x_dt = [
-                    human_time_from_epoch(x, tzmode, offset_minutes) for x in xs_used
-                ]
-                fig = go.Figure()
-                series2 = list(ys_used.keys())
-                y1name = series2[0]
-                if style == "line":
-                    shape1 = (
-                        "hv"
-                        if (step_for_binary and binary_map.get(y1name, False))
-                        else "linear"
-                    )
-                    if line_layout.startswith("stack") and y2:
-                        fig = make_subplots(
-                            rows=2,
-                            cols=1,
-                            shared_xaxes=True,
-                            vertical_spacing=0.07,
-                            subplot_titles=(y1name, y2),
-                        )
-                        fig.add_trace(
-                            go.Scatter(
-                                x=x_dt,
-                                y=ys_used[y1name],
-                                mode="lines+markers",
-                                name=y1name,
-                                line_shape=shape1,
-                            ),
-                            row=1,
-                            col=1,
-                        )
-                    else:
-                        fig.add_trace(
-                            go.Scatter(
-                                x=x_dt,
-                                y=ys_used[y1name],
-                                mode="lines+markers",
-                                name=y1name,
-                                yaxis="y1",
-                                line_shape=shape1,
-                            )
-                        )
-                elif style == "scatter":
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x_dt,
-                            y=ys_used[y1name],
-                            mode="markers",
-                            name=y1name,
-                            yaxis="y1",
-                        )
-                    )
-                elif style == "bar":
-                    fig.add_trace(
-                        go.Bar(
-                            x=x_dt,
-                            y=ys_used[y1name],
-                            name=y1name,
-                            yaxis="y1",
-                            width=width_ms if width_ms > 0 else None,
-                            opacity=0.75,
-                        )
-                    )
-                if len(series2) >= 2 and series2[1]:
-                    y2name = series2[1]
-                    if style == "line":
-                        shape2 = (
-                            "hv"
-                            if (step_for_binary and binary_map.get(y2name, False))
-                            else "linear"
-                        )
-                        if line_layout.startswith("stack") and y2:
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=x_dt,
-                                    y=ys_used[y2name],
-                                    mode="lines+markers",
-                                    name=y2name,
-                                    line_shape=shape2,
-                                ),
-                                row=2,
-                                col=1,
-                            )
-                        else:
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=x_dt,
-                                    y=ys_used[y2name],
-                                    mode="lines+markers",
-                                    name=y2name,
-                                    yaxis="y2",
-                                    line_shape=shape2,
-                                )
-                            )
-                    elif style == "scatter":
-                        fig.add_trace(
-                            go.Scatter(
-                                x=x_dt,
-                                y=ys_used[y2name],
-                                mode="markers",
-                                name=y2name,
-                                yaxis="y2",
-                            )
-                        )
-                    elif style == "bar":
-                        fig.add_trace(
-                            go.Bar(
-                                x=x_dt,
-                                y=ys_used[y2name],
-                                name=y2name,
-                                yaxis=(
-                                    "y2" if bar_mode.startswith("overlay") else "y1"
-                                ),
-                                width=width_ms if width_ms > 0 else None,
-                                opacity=0.55,
-                            )
-                        )
-                    if style == "bar" and not bar_mode.startswith("overlay"):
-                        fig.update_layout(
-                            yaxis2={
-                                "title": y2name,
-                                "overlaying": "y",
-                                "side": "right",
-                                "matches": "y",
-                                "automargin": True,
-                                "showgrid": False,
-                                "zeroline": False,
-                            }
-                        )
-                    else:
-                        fig.update_layout(
-                            yaxis2={
-                                "title": y2name,
-                                "overlaying": "y",
-                                "side": "right",
-                            }
-                        )
-                fig.update_layout(
-                    title=f"{title} — {table}",
-                    xaxis={
-                        "title": "Time",
-                        "showgrid": True,
-                        "zeroline": False,
-                        "automargin": True,
-                    },
-                    yaxis={
-                        "title": series2[0],
-                        "showgrid": True,
-                        "zeroline": False,
-                        "automargin": True,
-                    },
-                    legend={
-                        "orientation": "h",
-                        "yanchor": "top",
-                        "y": -0.15,
-                        "xanchor": "center",
-                        "x": 0.5,
-                    },
-                    margin={"l": 60, "r": 60, "t": 70, "b": 100},
-                    height=600,
-                )
-                if style == "bar":
-                    fig.update_layout(
-                        barmode=(
-                            "overlay" if bar_mode.startswith("overlay") else "group"
-                        )
-                    )
-                return fig
-
-            allow_png = not (style == "line" and y2 and line_layout.startswith("stack"))
-            if allow_png:
-                png_path = maybe_export_png(html_path, fig_factory_again)
+            if allow_png and fig_factory is not None:
+                png_path = maybe_export_png(html_path, fig_factory)
                 if png_path:
                     try:
                         cgood(f"PNG written:  {png_path.resolve()}")
                     except Exception:
                         cgood(f"PNG written:  {png_path}")
-            else:
+            elif not allow_png:
                 cinfo("PNG export disabled for stacked line layout (HTML only).")
-            # Loop again or exit while handled at top
+
+            if not prompt_yes_no("Create another graph?", default=False):
+                return
+
+            if not prompt_yes_no("Reuse the same series selection?", default=True):
+                selections = prompt_series_selection(
+                    tnames, graphable_map, max_series=5
+                )
+                if not selections:
+                    cerr("No series selected.")
+                    return
+
+            if not prompt_yes_no("Reuse the same time window?", default=True):
+                epoch_window = prompt_epoch_window()
 
     finally:
         conn.close()
