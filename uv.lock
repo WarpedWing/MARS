@@ -63,12 +63,12 @@ name = "maclogsleuth"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "kaleido" },
     { name = "plotly" },
 ]
 
 [package.optional-dependencies]
 plotly = [
+    { name = "kaleido" },
     { name = "pandas" },
 ]
 
@@ -79,7 +79,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "kaleido", specifier = ">=1.1.0" },
+    { name = "kaleido", marker = "extra == 'plotly'", specifier = ">=1.1.0" },
     { name = "pandas", marker = "extra == 'plotly'", specifier = ">=2.3.3" },
     { name = "plotly", specifier = ">=6.3.1" },
 ]

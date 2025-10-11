@@ -5,16 +5,54 @@ description = "..."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "kaleido>=1.1.0",
     "plotly>=6.3.1",
 ]
 
 [project.optional-dependencies]
 plotly = [
     "pandas>=2.3.3",
+    "kaleido>=1.1.0",
 ]
 
 [dependency-groups]
 dev = [
     "pandas>=2.3.3",
+]
+
+[tool.ruff]
+[tool.ruff.lint]
+select = [
+  "E",        
+  "F",        
+  "W",        
+  "I",        
+  "UP",       
+  "C4",       
+  "FA",       
+  "ISC",      
+  "ICN"
+]
+
+extend-select = [
+    "F",        
+    "W",        
+    "E",        
+    "I",        
+    "UP",       
+    "C4",       
+    "FA",       
+    "ISC",      
+    "ICN",      
+    "RET",      
+    "SIM",     
+    "TID",      
+    "TC",      
+    "PTH",      
+    "TD",      
+  "NPY"      
+]
+
+ignore = [
+    "B011",
+    "E501"
 ]

@@ -49,7 +49,9 @@ DEFAULT_EPOCH_MAX = 4102444800.0  # 2100-01-01
 
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$")
 
-FILL_RATIO_STRONG_THRESHOLD = 0.85  # columns with >=85% fill rate are treated as "dense"
+FILL_RATIO_STRONG_THRESHOLD = (
+    0.85  # columns with >=85% fill rate are treated as "dense"
+)
 
 
 # ---------- utils ----------
@@ -212,7 +214,10 @@ def quote_ident(name: str) -> str:
 def load_profiles() -> list[str]:
     """Return list of available base names (present in both Schemas and Rubrics)."""
     bases = set()
-    bases.update(p.name.split(".powerlog.schema.csv")[0] for p in SCHEMAS_DIR.glob("*.powerlog.schema.csv"))
+    bases.update(
+        p.name.split(".powerlog.schema.csv")[0]
+        for p in SCHEMAS_DIR.glob("*.powerlog.schema.csv")
+    )
     profiles = []
     for b in sorted(bases):
         r = RUBRICS_DIR / f"{b}.powerlog.rubric.json"
@@ -296,8 +301,13 @@ def build_expectations(
             required_idxs.add(idx)
 
         observed_ratio = meta.get("observed_fill_ratio")
-        fill_expectations.append(observed_ratio if isinstance(observed_ratio, (int, float)) else None)
-        if isinstance(observed_ratio, (int, float)) and observed_ratio >= FILL_RATIO_STRONG_THRESHOLD:
+        fill_expectations.append(
+            observed_ratio if isinstance(observed_ratio, (int, float)) else None
+        )
+        if (
+            isinstance(observed_ratio, (int, float))
+            and observed_ratio >= FILL_RATIO_STRONG_THRESHOLD
+        ):
             dense_idxs.add(idx)
 
     return {
@@ -329,7 +339,9 @@ def classify_cell(val: Any, epoch_lo: float, epoch_hi: float) -> str:
     return "unknown"
 
 
-def row_first_timestamp_index(row: tuple[Any, ...], epoch_lo: float, epoch_hi: float) -> int | None:
+def row_first_timestamp_index(
+    row: tuple[Any, ...], epoch_lo: float, epoch_hi: float
+) -> int | None:
     for i, v in enumerate(row):
         if is_epoch(v, epoch_lo, epoch_hi):
             return i
@@ -464,7 +476,9 @@ def score_segment_against_table_strict(row_vals, start_idx, table_def):
     return True, {"from_schema_index": ts_schema_idx, "mapped_values": mapped}
 
 
-def compute_match_metrics(mapped: list[Any], table_def: dict[str, Any]) -> dict[str, float]:
+def compute_match_metrics(
+    mapped: list[Any], table_def: dict[str, Any]
+) -> dict[str, float]:
     total_cols = len(mapped) or 1
     non_null = sum(1 for v in mapped if not is_null(v))
     non_null_ratio = non_null / total_cols
@@ -472,18 +486,14 @@ def compute_match_metrics(mapped: list[Any], table_def: dict[str, Any]) -> dict[
     required_idxs = table_def.get("required_idxs") or set()
     required_total = len(required_idxs)
     required_hits = sum(
-        1
-        for idx in required_idxs
-        if idx < len(mapped) and not is_null(mapped[idx])
+        1 for idx in required_idxs if idx < len(mapped) and not is_null(mapped[idx])
     )
     required_ratio = required_hits / required_total if required_total else 1.0
 
     dense_idxs = table_def.get("dense_idxs") or set()
     dense_total = len(dense_idxs)
     dense_hits = sum(
-        1
-        for idx in dense_idxs
-        if idx < len(mapped) and not is_null(mapped[idx])
+        1 for idx in dense_idxs if idx < len(mapped) and not is_null(mapped[idx])
     )
     dense_ratio = dense_hits / dense_total if dense_total else non_null_ratio
 
@@ -512,7 +522,12 @@ def quick_match_id_text_real(
     cols = table_exp["columns"]
 
     # Only support classic [ID, TEXT, REAL] shape with ID first
-    if len(cols) < 3 or roles[0] != "id" or roles[1] != "text" or roles[2] not in ("real", "integer"):
+    if (
+        len(cols) < 3
+        or roles[0] != "id"
+        or roles[1] != "text"
+        or roles[2] not in ("real", "integer")
+    ):
         return 0.0
 
     n = len(row)
@@ -523,7 +538,9 @@ def quick_match_id_text_real(
     return 0.0
 
 
-def ensure_table(dst_cur: sqlite3.Cursor, table: str, schema_cols: list[tuple[str, str]]):
+def ensure_table(
+    dst_cur: sqlite3.Cursor, table: str, schema_cols: list[tuple[str, str]]
+):
     if table.lower() == "sqlite_sequence":
         return  # internal table, skip creation
     cols_sql = ", ".join(f"{quote_ident(c)} {t or 'TEXT'}" for c, t in schema_cols)
@@ -548,7 +565,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
 
     schema_by_table = load_schema(profile)
     rubric_data = load_rubric(profile)
-    rubric_tables = rubric_data.get("tables", {}) if isinstance(rubric_data, dict) else {}
+    rubric_tables = (
+        rubric_data.get("tables", {}) if isinstance(rubric_data, dict) else {}
+    )
 
     salvaged_dir = recovered_path.parent / SALVAGED_DIR
     salvaged_dir.mkdir(parents=True, exist_ok=True)
@@ -565,7 +584,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
     # lost_and_found rows
     try:
         # Grab all raw rows as tuples
-        raw_rows = cur.execute(f"SELECT rowid, * FROM {quote_ident(LNF_TABLE)}").fetchall()
+        raw_rows = cur.execute(
+            f"SELECT rowid, * FROM {quote_ident(LNF_TABLE)}"
+        ).fetchall()
         lf_rowids: list[int] = []
         rows: list[tuple[Any, ...]] = []
         for rec in raw_rows:
@@ -594,7 +615,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
         for tname, cols in schema_by_table.items()
     }
 
-    mappings = []  # for the mapping CSV: (lf_index, lf_rowid, lf_id_value, table, score)
+    mappings = (
+        []
+    )  # for the mapping CSV: (lf_index, lf_rowid, lf_id_value, table, score)
     consumed_rows = set()  # mark L&F row indices that we've already used
     written_tables: set[str] = set()
 
@@ -647,7 +670,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
             if not candidates:
                 continue
 
-            best_candidate = max(candidates, key=lambda item: (item[0], item[1], item[2]))
+            best_candidate = max(
+                candidates, key=lambda item: (item[0], item[1], item[2])
+            )
             (
                 _confidence,
                 _neg_start,
@@ -661,7 +686,10 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
 
             cols = tbl.get("column_list") or []
             q_table = quote_ident(table_name)
-            col_defs = ", ".join(f"{quote_ident(c)} {(t or 'TEXT')}" for c, t in zip(cols, types, strict=False))
+            col_defs = ", ".join(
+                f"{quote_ident(c)} {(t or 'TEXT')}"
+                for c, t in zip(cols, types, strict=False)
+            )
             if table_name.lower() != "sqlite_sequence":
                 dst_cur.execute(f"CREATE TABLE IF NOT EXISTS {q_table} ({col_defs});")
                 placeholders = ", ".join("?" for _ in cols)
@@ -674,7 +702,15 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
                     continue
 
             written_tables.add(table_name)
-            mappings.append((r_idx, lf_rowids[r_idx], lf_id_value, table_name, metrics["confidence"]))
+            mappings.append(
+                (
+                    r_idx,
+                    lf_rowids[r_idx],
+                    lf_id_value,
+                    table_name,
+                    metrics["confidence"],
+                )
+            )
             consumed_rows.add(r_idx)
             break  # stop scanning more start positions for this row
 
@@ -686,7 +722,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
         ).fetchone()
         if not seq_exists:
             dst_cur.execute("DROP TABLE IF EXISTS _tmp_autoinc")
-            dst_cur.execute("CREATE TABLE IF NOT EXISTS _tmp_autoinc(id INTEGER PRIMARY KEY AUTOINCREMENT)")
+            dst_cur.execute(
+                "CREATE TABLE IF NOT EXISTS _tmp_autoinc(id INTEGER PRIMARY KEY AUTOINCREMENT)"
+            )
             dst_cur.execute("INSERT INTO _tmp_autoinc DEFAULT VALUES")
             dst_cur.execute("DELETE FROM _tmp_autoinc")
             dst_cur.execute("DROP TABLE _tmp_autoinc")
@@ -705,11 +743,18 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
                 max_id_row = dst_cur.execute(
                     f"SELECT MAX({quote_ident(first_col_name)}) FROM {quote_ident(table_name)}"
                 ).fetchone()
-                max_id = max_id_row[0] if max_id_row and max_id_row[0] is not None else None
+                max_id = (
+                    max_id_row[0] if max_id_row and max_id_row[0] is not None else None
+                )
                 if max_id is None:
                     continue
-                dst_cur.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table_name,))
-                dst_cur.execute("INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)", (table_name, int(max_id)))
+                dst_cur.execute(
+                    "DELETE FROM sqlite_sequence WHERE name = ?", (table_name,)
+                )
+                dst_cur.execute(
+                    "INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)",
+                    (table_name, int(max_id)),
+                )
 
     dst.commit()
     dst.close()
@@ -720,7 +765,15 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
         w = csv.writer(f)
         w.writerow(["lf_row_index", "lf_rowid", "lf_id_value", "table", "confidence"])
         for lf_idx, lf_rowid, lf_id, tname, score in mappings:
-            w.writerow([lf_idx, lf_rowid, "" if lf_id is None else lf_id, tname, f"{score:.3f}"])
+            w.writerow(
+                [
+                    lf_idx,
+                    lf_rowid,
+                    "" if lf_id is None else lf_id,
+                    tname,
+                    f"{score:.3f}",
+                ]
+            )
 
     print(f"Success: Rebuilt structured Powerlog DB -> {out_db}")
     print(f"Info: Mapping CSV -> {map_csv}")
@@ -731,7 +784,9 @@ def salvage_recovered_sqlite(recovered_path: Path) -> Path:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Salvage a recovered Powerlog SQLite using fingerprinted rows.")
+    ap = argparse.ArgumentParser(
+        description="Salvage a recovered Powerlog SQLite using fingerprinted rows."
+    )
     ap.add_argument(
         "recovered_db",
         help="Path to *_recovered.sqlite (or any recovered SQLite with lost_and_found)",

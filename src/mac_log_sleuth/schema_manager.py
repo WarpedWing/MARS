@@ -56,7 +56,7 @@ def load_schema_catalog() -> dict[str, dict]:
             "label": f.stem,
             "path": f,
             "tables": tables,
-            "tables_lower": {t.lower() for t in tables.keys()},
+            "tables_lower": {t.lower() for t in tables},
         }
     return catalog
 

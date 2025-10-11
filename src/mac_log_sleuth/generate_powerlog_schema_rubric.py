@@ -28,8 +28,8 @@ from datetime import datetime
 from pathlib import Path
 
 # -------- Constants --------
-EPOCH_MIN_2010 = 1262304000           # 2010-01-01 00:00:00 UTC
-EPOCH_MAX_2100 = 4102444800           # 2100-01-01 00:00:00 UTC
+EPOCH_MIN_2010 = 1262304000  # 2010-01-01 00:00:00 UTC
+EPOCH_MAX_2100 = 4102444800  # 2100-01-01 00:00:00 UTC
 
 TIMESTAMP_NAME_RE = re.compile(r"(timestamp|date)", re.IGNORECASE)
 
@@ -37,14 +37,14 @@ TIMESTAMP_NAME_RE = re.compile(r"(timestamp|date)", re.IGNORECASE)
 # (We only add these when column name & table match.)
 SOFT_HINTS = {
     # table_prefix : { column_name : {"range":[min,max]} }
-    "PLBatteryAgent": {
-        "Level": {"range": [0, 100]}
-    }
+    "PLBatteryAgent": {"Level": {"range": [0, 100]}}
 }
+
 
 # -------- Helpers --------
 def is_epoch_column(col_name: str) -> bool:
     return bool(TIMESTAMP_NAME_RE.search(col_name or ""))
+
 
 def soft_hints_for(table: str, col: str):
     for prefix, colmap in SOFT_HINTS.items():
@@ -52,15 +52,18 @@ def soft_hints_for(table: str, col: str):
             return colmap[col]
     return None
 
+
 def safe_type(sqlite_affinity: str | None) -> str:
     # Keep exact string (including blank for sqlite_sequence's 'seq')
     return sqlite_affinity or ""
+
 
 def fetch_tables(conn: sqlite3.Connection) -> list[tuple[str, str]]:
     """Returns list of (name, sql) for tables in sqlite_master, including internal ones."""
     cur = conn.cursor()
     cur.execute("SELECT name, sql FROM sqlite_master WHERE type='table';")
     return cur.fetchall()
+
 
 def fetch_columns(conn: sqlite3.Connection, table: str) -> list[tuple]:
     """
@@ -71,6 +74,7 @@ def fetch_columns(conn: sqlite3.Connection, table: str) -> list[tuple]:
     qname = '"' + table.replace('"', '""') + '"'
     return cur.execute(f"PRAGMA table_info({qname});").fetchall()
 
+
 def sample_table_info(conn: sqlite3.Connection, table: str, limit: int = 200):
     """Sample up to 'limit' rows for examples only (never constraints)."""
     qname = '"' + table.replace('"', '""') + '"'
@@ -79,6 +83,7 @@ def sample_table_info(conn: sqlite3.Connection, table: str, limit: int = 200):
         return cur.execute(f"SELECT * FROM {qname} LIMIT {limit};").fetchall()
     except sqlite3.DatabaseError:
         return []
+
 
 def infer_examples(rows, col_index: int, max_examples: int = 5):
     """Grab up to a few non-null examples for rubric doc."""
@@ -92,14 +97,28 @@ def infer_examples(rows, col_index: int, max_examples: int = 5):
                     break
     return ex
 
+
 # -------- Main --------
 def main():
-    ap = argparse.ArgumentParser(description="Generate Powerlog schema CSV and rubric JSON.")
-    ap.add_argument("--db", required=True, help="Path to Powerlog SQLite DB (.PLSQL/.sqlite)")
-    ap.add_argument("--name", help="Base name for outputs (no extension). If omitted, derived from DB filename.")
-    ap.add_argument("--schemas-dir", default="Schemas", help="Directory to write schema CSV")
-    ap.add_argument("--rubrics-dir", default="Rubrics", help="Directory to write rubric JSON")
-    ap.add_argument("--force", action="store_true", help="Overwrite existing outputs if present")
+    ap = argparse.ArgumentParser(
+        description="Generate Powerlog schema CSV and rubric JSON."
+    )
+    ap.add_argument(
+        "--db", required=True, help="Path to Powerlog SQLite DB (.PLSQL/.sqlite)"
+    )
+    ap.add_argument(
+        "--name",
+        help="Base name for outputs (no extension). If omitted, derived from DB filename.",
+    )
+    ap.add_argument(
+        "--schemas-dir", default="Schemas", help="Directory to write schema CSV"
+    )
+    ap.add_argument(
+        "--rubrics-dir", default="Rubrics", help="Directory to write rubric JSON"
+    )
+    ap.add_argument(
+        "--force", action="store_true", help="Overwrite existing outputs if present"
+    )
     args = ap.parse_args()
 
     db_path = Path(args.db)
@@ -108,7 +127,9 @@ def main():
         sys.exit(1)
 
     # Use a filesystem-friendly UTC timestamp when --name is omitted
-    base_name = args.name or f"{db_path.stem}.{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}"
+    base_name = (
+        args.name or f"{db_path.stem}.{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}"
+    )
     schemas_dir = Path(args.schemas_dir)
     rubrics_dir = Path(args.rubrics_dir)
     schemas_dir.mkdir(parents=True, exist_ok=True)
@@ -120,7 +141,9 @@ def main():
     if not args.force:
         for p in (schema_csv_path, rubric_json_path):
             if p.exists():
-                print(f"✗ Output exists (use --force to overwrite): {p}", file=sys.stderr)
+                print(
+                    f"✗ Output exists (use --force to overwrite): {p}", file=sys.stderr
+                )
                 sys.exit(2)
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -147,9 +170,9 @@ def main():
             "notes": [
                 "This rubric is portable across hosts; ranges are hints, not constraints.",
                 "Any column with 'timestamp' or 'date' in its name is Unix epoch.",
-                "ID columns are treated as identifiers (no statistical ranges)."
+                "ID columns are treated as identifiers (no statistical ranges).",
             ],
-            "tables": {}
+            "tables": {},
         }
 
         for tname, _sql in tables:
@@ -180,7 +203,9 @@ def main():
                 observed_fill_ratio = (
                     observed_non_null / sample_count if sample_count else None
                 )
-                observed_notnull = bool(sample_count and observed_non_null == sample_count)
+                observed_notnull = bool(
+                    sample_count and observed_non_null == sample_count
+                )
                 effective_notnull = declared_notnull or observed_notnull
 
                 cinfo = {
@@ -189,7 +214,7 @@ def main():
                     "declared_notnull": declared_notnull,
                     "observed_non_null": observed_non_null if sample_count else 0,
                     "observed_total": sample_count,
-                    "primary_key": bool(pk)
+                    "primary_key": bool(pk),
                 }
                 if observed_fill_ratio is not None:
                     cinfo["observed_fill_ratio"] = round(observed_fill_ratio, 5)
@@ -224,9 +249,9 @@ def main():
                 columns_dict[col_name] = cinfo
 
             rubric["tables"][tname] = {
-                "columns": columns_dict,     # per-column metadata dict
-                "column_list": columns_list, # flat list for consumers
-                "types": types_list          # flat types aligned with column_list
+                "columns": columns_dict,  # per-column metadata dict
+                "column_list": columns_list,  # flat list for consumers
+                "types": types_list,  # flat types aligned with column_list
             }
 
         with rubric_json_path.open("w", encoding="utf-8") as jf:
