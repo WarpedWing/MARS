@@ -150,14 +150,15 @@ def to_epoch(dt: datetime) -> float:
 
 
 def human_time_from_epoch(
-    epoch_s: float, tzmode: str, offset_minutes: int = 0
+    epoch_s: float,
+    tzmode: str,
+    offset_minutes: int = 0,
 ) -> datetime:
     if tzmode == "UTC":
         return datetime.fromtimestamp(epoch_s, tz=UTC)
     if tzmode == "OFFSET":
         return datetime.fromtimestamp(
-            epoch_s, tz=timezone(timedelta(minutes=offset_minutes))
-        )
+            epoch_s, tz=timezone(timedelta(minutes=offset_minutes)))
     # Local
     return datetime.fromtimestamp(epoch_s)
 
@@ -242,7 +243,9 @@ def _nice_bucket_seconds(cand: float) -> float:
 
 
 def bin_time_series(
-    xs: list[float], ys: dict[str, list[float | None]], target_bars: int = 120
+    xs: list[float],
+    ys: dict[str, list[float | None]],
+    target_bars: int = 120,
 ) -> tuple[list[float], dict[str, list[float | None]], float]:
     """
     Downsample into time buckets for bar charts to keep bars visible.
@@ -298,7 +301,9 @@ def bin_time_series(
 
 
 def filter_columns_with_non_null(
-    conn: sqlite3.Connection, table: str, cols: list[str]
+    conn: sqlite3.Connection,
+    table: str,
+    cols: list[str],
 ) -> list[str]:
     """
     Keep only columns that have at least one non-NULL value in the table.
@@ -417,8 +422,46 @@ def ensure_outdir(path: Path) -> Path:
     return path
 
 
+def truncate_label(label: str, max_len: int = 30) -> str:
+    if len(label) <= max_len:
+        return label
+    return "..." + label[-max_len:]
+
+
+def compute_chart_title(
+    base_title: str,
+    xs: list[float],
+    x_range: tuple[float | None, float | None] | None,
+    tzmode: str,
+    offset_minutes: int,
+) -> tuple[str, float | None, float | None]:
+    data_min = min(xs) if xs else None
+    data_max = max(xs) if xs else None
+    start_epoch = x_range[0] if (x_range and x_range[0] is not None) else data_min
+    end_epoch = x_range[1] if (x_range and x_range[1] is not None) else data_max
+    if start_epoch is None and end_epoch is None:
+        return base_title, None, None
+    if start_epoch is None:
+        start_epoch = end_epoch
+    if end_epoch is None:
+        end_epoch = start_epoch
+    if start_epoch > end_epoch:
+        start_epoch, end_epoch = end_epoch, start_epoch
+    start_dt = human_time_from_epoch(start_epoch, tzmode, offset_minutes)
+    end_dt = human_time_from_epoch(end_epoch, tzmode, offset_minutes)
+    start_str = start_dt.strftime("%Y-%m-%d")
+    end_str = end_dt.strftime("%Y-%m-%d")
+    if start_str == end_str:
+        title = f"{base_title}: {start_str}"
+    else:
+        title = f"{base_title}: {start_str} to {end_str}"
+    return title, start_epoch, end_epoch
+
+
 def prompt_series_selection(
-    tnames: list[str], graphable_map: dict[str, list[str]], max_series: int = 5
+    tnames: list[str],
+    graphable_map: dict[str, list[str]],
+    max_series: int = 5,
 ) -> list[tuple[str, str]]:
     """Interactive selector for up to `max_series` (table, column) pairs.
 
@@ -531,8 +574,8 @@ def prompt_chart_type_for_selection(count: int) -> str:
     if count > 1:
         disabled["bar"] = "(1 datatype max)"
     if count > 2:
-        disabled["overlay line"] = "(max 2)"
-        disabled["scatter"] = "(max 2)"
+        disabled["overlay line"] = "(2 datatypes max)"
+        disabled["scatter"] = "(2 datatypes max)"
 
     choice = prompt_choice_with_disabled("\nChart type:", labels, disabled)
     mapping = {
@@ -581,7 +624,7 @@ def build_union_dataset(
         all_ts.update(xs)
     union_x = sorted(all_ts)
     if not union_x:
-        return [], {}
+        return [], {{}}
     union_series: dict[str, list[float | None]] = {}
     for label, xs, values in series_data:
         lookup = dict(zip(xs, values))
@@ -597,6 +640,7 @@ def create_overlay_figure(
     offset_minutes: int,
     step_for_binary: bool,
     title: str,
+    x_range: tuple[float | None, float | None] | None = None,
 ) -> go.Figure:
     labels = list(ys.keys())
     x_dt = [human_time_from_epoch(x, tzmode, offset_minutes) for x in xs]
@@ -848,6 +892,7 @@ def render_stacked_lines(
     panels: list[dict],  # each: {label:str, xs:list[float], ys:list[float|None]}
     step_for_binary: bool = True,
     smooth_window: int = 1,
+    x_range: tuple[float | None, float | None] | None = None,
 ) -> Path:
     """
     Render stacked line panels (1 per series). Each panel is independent and
@@ -856,20 +901,24 @@ def render_stacked_lines(
     if not panels:
         raise ValueError("No panels to plot.")
 
-    # Pre-process and convert times
     rows = len(panels)
+    subplot_titles = [truncate_label(p.get("label", "")) for p in panels]
     fig = make_subplots(
-        rows=rows, cols=1, shared_xaxes=False, vertical_spacing=0.06
+        rows=rows,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=subplot_titles,
     )
-    for i, p in enumerate(panels, start=1):
-        xs = p.get("xs", [])
-        ys = p.get("ys", [])
-        # optional smoothing (skip booleans)
+    all_xs: list[float] = []
+    for i, panel in enumerate(panels, start=1):
+        xs = panel.get("xs", [])
+        ys = panel.get("ys", [])
+        label = panel.get("label", "")
+        all_xs.extend(xs)
         is_bool = is_binary_series(ys)
         yplot = (
-            ys
-            if (is_bool or smooth_window <= 1)
-            else rolling_mean(list(ys), smooth_window)
+            ys if (is_bool or smooth_window <= 1) else rolling_mean(list(ys), smooth_window)
         )
         x_dt = [human_time_from_epoch(x, tzmode, offset_minutes) for x in xs]
         shape = "hv" if (step_for_binary and is_bool) else "linear"
@@ -878,20 +927,18 @@ def render_stacked_lines(
                 x=x_dt,
                 y=yplot,
                 mode="lines+markers",
-                name=p["label"],
+                name=label,  # Full label for legend
                 line_shape=shape,
             ),
             row=i,
             col=1,
         )
-        # Add a y-axis title per panel
-        fig.update_yaxes(title_text=p["label"], row=i, col=1, automargin=True)
-        # Ensure each panel shows its own time ticks
-        fig.update_xaxes(showticklabels=True, row=i, col=1, automargin=True)
 
-    # Layout and footer
+    chart_title, start_epoch, end_epoch = compute_chart_title(
+        base_title, all_xs, x_range, tzmode, offset_minutes
+    )
     fig.update_layout(
-        title=f"{base_title} — Stacked Lines ({rows})",
+        title=chart_title,
         showlegend=True,
         legend={
             "orientation": "h",
@@ -903,24 +950,31 @@ def render_stacked_lines(
         margin={"l": 60, "r": 60, "t": 70, "b": 100},
         height=max(600, 350 + 220 * (rows - 1)),
     )
+
+    if start_epoch is not None and end_epoch is not None:
+        start_dt = human_time_from_epoch(start_epoch, tzmode, offset_minutes)
+        end_dt = human_time_from_epoch(end_epoch, tzmode, offset_minutes)
+        for row in range(1, rows + 1):
+            fig.update_xaxes(range=[start_dt, end_dt], row=row, col=1)
+
     tzlabel = {
         "LOCAL": "Local time",
         "UTC": "UTC",
         "OFFSET": f"UTC{offset_minutes:+d}m",
     }.get(tzmode, "Local time")
-    fig.update_layout(
-        annotations=[
-            {
-                "xref": "paper",
-                "yref": "paper",
-                "x": 0,
-                "y": -0.28,
-                "text": f"X-axis: {tzlabel}. Data plotted as acquired from Powerlog.",
-                "showarrow": False,
-                "font": {"size": 11},
-            }
-        ]
+    annotations = list(fig.layout.annotations)
+    annotations.append(
+        {
+            "xref": "paper",
+            "yref": "paper",
+            "x": 0,
+            "y": -0.28,
+            "text": f"X-axis: {tzlabel}. Data plotted as acquired from Powerlog.",
+            "showarrow": False,
+            "font": {"size": 11},
+        }
     )
+    fig.update_layout(annotations=annotations)
 
     outdir = ensure_outdir(outdir)
     ts = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -944,6 +998,7 @@ def render_plot_html(
     smooth_window: int = 1,
     step_for_binary: bool = True,
     line_layout: str = "overlay",  # "overlay" or "stacked"
+    x_range: tuple[float | None, float | None] | None = None,
 ) -> Path:
     """
     Build Plotly figure and save as HTML. Returns the HTML path.
@@ -972,8 +1027,11 @@ def render_plot_html(
         raise ValueError("No Y series to plot.")
 
     # width_ms is suggested by bin_time_series when style == "bar"
+    chart_title, start_epoch, end_epoch = compute_chart_title(
+        base_title, xs_used, x_range, tzmode, offset_minutes
+    )
 
-    # Special case: stacked line layout (two panels)
+    # This is dead code as of the current REPL logic, but kept for potential future use.
     if style == "line" and y2_col and (line_layout.lower().startswith("stack")):
         # Build stacked subplots sharing X
         fig = make_subplots(
@@ -981,7 +1039,7 @@ def render_plot_html(
             cols=1,
             shared_xaxes=True,
             vertical_spacing=0.07,
-            subplot_titles=(series[0], y2_col),
+            subplot_titles=(truncate_label(series[0]), truncate_label(y2_col)),
         )
         shape1 = (
             "hv" if (step_for_binary and binary_map.get(series[0], False)) else "linear"
@@ -991,7 +1049,7 @@ def render_plot_html(
                 x=x_dt,
                 y=ys_used[series[0]],
                 mode="lines+markers",
-                name=series[0],
+                name=truncate_label(series[0]),
                 line_shape=shape1,
             ),
             row=1,
@@ -1005,19 +1063,14 @@ def render_plot_html(
                 x=x_dt,
                 y=ys_used[y2_col],
                 mode="lines+markers",
-                name=y2_col,
+                name=truncate_label(y2_col),
                 line_shape=shape2,
             ),
             row=2,
             col=1,
         )
-        # Layout
-        title = f"{base_title} · {table} — {series[0]} vs {y2_col}"
-        # Add clear per-panel y-axis labels
-        fig.update_yaxes(title_text=series[0], row=1, col=1)
-        fig.update_yaxes(title_text=y2_col, row=2, col=1)
         fig.update_layout(
-            title=title,
+            title=chart_title,
             legend={
                 "orientation": "h",
                 "yanchor": "top",
@@ -1028,30 +1081,41 @@ def render_plot_html(
             margin={"l": 60, "r": 60, "t": 70, "b": 100},
             height=700,
         )
-        # Footer annotation
+        if start_epoch is not None and end_epoch is not None:
+            start_dt = human_time_from_epoch(start_epoch, tzmode, offset_minutes)
+            end_dt = human_time_from_epoch(end_epoch, tzmode, offset_minutes)
+            fig.update_xaxes(range=[start_dt, end_dt], row=1, col=1)
+            fig.update_xaxes(range=[start_dt, end_dt], row=2, col=1)
+
+        panel_titles = {truncate_label(series[0]), truncate_label(y2_col)}
+        for ann in fig.layout.annotations:
+            if ann.text in panel_titles:
+                ann.update(
+                    x=0.5, xanchor="center", y=1.08, yanchor="bottom", font={"size": 14}
+                )
+
         tzlabel = {
             "LOCAL": "Local time",
             "UTC": "UTC",
             "OFFSET": f"UTC{offset_minutes:+d}m",
         }.get(tzmode, "Local time")
-        foot = (
-            f"X-axis: human-readable {tzlabel}. "
-            f"Series: {series[0]} (top), {y2_col} (bottom). "
-            "Data plotted as acquired from Powerlog."
+        annotations = list(fig.layout.annotations)
+        annotations.append(
+            {
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0,
+                "y": -0.28,
+                "text": (
+                    f"X-axis: human-readable {tzlabel}. "
+                    f"Series: {truncate_label(series[0])} (top), {truncate_label(y2_col)} (bottom). "
+                    "Data plotted as acquired from Powerlog."
+                ),
+                "showarrow": False,
+                "font": {"size": 11},
+            }
         )
-        fig.update_layout(
-            annotations=[
-                {
-                    "xref": "paper",
-                    "yref": "paper",
-                    "x": 0,
-                    "y": -0.28,
-                    "text": foot,
-                    "showarrow": False,
-                    "font": {"size": 11},
-                }
-            ]
-        )
+        fig.update_layout(annotations=annotations)
         # Write and return (reuse writer below)
         outdir = ensure_outdir(outdir)
         ts = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -1075,7 +1139,7 @@ def render_plot_html(
             from plotly.offline import plot as plotly_plot  # type: ignore
 
             plotly_plot(
-                fig, filename=str(html_path), auto_open=False, include_plotlyjs="cdn"
+                fig, filename=str(html_path), auto_open=True, include_plotlyjs="cdn"
             )
         if not html_path.exists():
             cwarn(f"HTML not found after write attempt: {html_path}")
@@ -1163,12 +1227,8 @@ def render_plot_html(
             pass
 
     # Layout
-    # Title: DB · Table — Y1[ vs Y2]
-    title = f"{base_title} · {table} — {series[0]}"
-    if y2_col and (y2_col in series):
-        title += f" vs {y2_col}"
     fig.update_layout(
-        title=title,
+        title=chart_title,
         xaxis={
             "title": "Time",
             "showgrid": True,
@@ -1191,9 +1251,7 @@ def render_plot_html(
         margin={"l": 60, "r": 60, "t": 70, "b": 100},
     )
 
-    # Add secondary axis label/scale
     if y2_on_y2_axis:
-        # Right axis actually used (overlay mode or non-bar)
         fig.update_layout(
             yaxis2={
                 "title": y2_col,
@@ -1205,7 +1263,6 @@ def render_plot_html(
             }
         )
     elif (y2_col in series) and style == "bar":
-        # Grouped bars: show a matched right axis for labeling/ticks
         fig.update_layout(
             yaxis2={
                 "title": y2_col,
@@ -1215,16 +1272,19 @@ def render_plot_html(
                 "automargin": True,
                 "showgrid": False,
                 "zeroline": False,
-            }
+            },
+            barmode="group",
         )
-
-    if style == "bar":
-        # group = side-by-side
+    elif style == "bar":
         fig.update_layout(
             barmode=("overlay" if bar_mode.lower().startswith("over") else "group")
         )
 
-    # Footer in annotations
+    if start_epoch is not None and end_epoch is not None:
+        start_dt = human_time_from_epoch(start_epoch, tzmode, offset_minutes)
+        end_dt = human_time_from_epoch(end_epoch, tzmode, offset_minutes)
+        fig.update_xaxes(range=[start_dt, end_dt])
+
     tzlabel = {
         "LOCAL": "Local time",
         "UTC": "UTC",
@@ -1232,23 +1292,21 @@ def render_plot_html(
     }.get(tzmode, "Local time")
     foot = (
         f"X-axis: human-readable {tzlabel}. "
-        f"Y-axis1: {series[0]}{'; Y-axis2: ' + y2_col if (y2_col and y2_col in series) else ''}. "
-        "Data plotted as acquired from Powerlog."
+        f"Series plotted: {', '.join(series)}. Data plotted as acquired from Powerlog."
     )
-    fig.update_layout(
-        annotations=[
-            {
-                "xref": "paper",
-                "yref": "paper",
-                "x": 0,
-                "y": -0.28,
-                "text": foot,
-                "showarrow": False,
-                "font": {"size": 11},
-            }
-        ],
-        height=600,
+    annotations = list(fig.layout.annotations)
+    annotations.append(
+        {
+            "xref": "paper",
+            "yref": "paper",
+            "x": 0,
+            "y": -0.28,
+            "text": foot,
+            "showarrow": False,
+            "font": {"size": 11},
+        }
     )
+    fig.update_layout(annotations=annotations, height=600)
 
     def safe_name(s: str | None) -> str:
         s = (s or "").strip()
@@ -1403,6 +1461,7 @@ def repl(db_path: Path, outdir: Path):
                     panels=panels,
                     step_for_binary=step_for_binary,
                     smooth_window=smooth_window,
+                    x_range=epoch_window,
                 )
                 allow_png = False
             else:
@@ -1420,6 +1479,7 @@ def repl(db_path: Path, outdir: Path):
                 labels = list(ys_union.keys())
                 table_title = selections[0][0] if len(selections) == 1 else "Combined"
                 y2_col = labels[1] if len(labels) >= 2 else None
+                x_limits = epoch_window
                 html_path = render_plot_html(
                     outdir=outdir,
                     base_title=title,
@@ -1434,11 +1494,19 @@ def repl(db_path: Path, outdir: Path):
                     smooth_window=smooth_window,
                     step_for_binary=step_for_binary,
                     line_layout="overlay",
+                    x_range=x_limits,
                 )
 
                 def fig_factory(
-                    xs=xs_union, ys=ys_union, st=style, table_name=table_title
+                    xs=xs_union,
+                    ys=ys_union,
+                    st=style,
+                    table_name=table_title,
+                    x_rng=x_limits,
                 ):
+                    chart_title_png, _, _ = compute_chart_title(
+                        title, xs, x_rng, tzmode, offset_minutes
+                    )
                     return create_overlay_figure(
                         xs,
                         ys,
@@ -1446,7 +1514,8 @@ def repl(db_path: Path, outdir: Path):
                         tzmode,
                         offset_minutes,
                         step_for_binary,
-                        f"{title} — {table_name}",
+                        chart_title_png,
+                        x_range=x_rng,
                     )
 
             try:
