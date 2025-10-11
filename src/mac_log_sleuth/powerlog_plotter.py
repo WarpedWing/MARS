@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-powerlog_plotter_v2.py
+powerlog_plotter.py
 
 Interactive Plotly-based visualizer for Powerlog SQLite databases.
 
@@ -515,7 +515,6 @@ def render_plot_html(
     smooth_window: int = 1,
     step_for_binary: bool = True,
     line_layout: str = "overlay",  # "overlay" or "stacked"
-    scatter_trend: bool = False,
 ) -> Path:
     """
     Build Plotly figure and save as HTML. Returns the HTML path.
@@ -585,6 +584,9 @@ def render_plot_html(
         )
         # Layout
         title = f"{base_title} · {table} — {series[0]} vs {y2_col}"
+        # Add clear per-panel y-axis labels
+        fig.update_yaxes(title_text=series[0], row=1, col=1)
+        fig.update_yaxes(title_text=y2_col, row=2, col=1)
         fig.update_layout(
             title=title,
             legend={
@@ -668,36 +670,6 @@ def render_plot_html(
         fig.add_trace(
             go.Scatter(x=x_dt, y=ys_used[y1], mode="markers", name=y1, yaxis="y1")
         )
-        if scatter_trend:
-            # Simple least-squares fit on epoch seconds vs value
-            pts = [
-                (xs_used[i], float(ys_used[y1][i]))
-                for i in range(min(len(xs_used), len(ys_used[y1])))
-                if ys_used[y1][i] is not None
-            ]
-            if len(pts) >= 2:
-                xs_, ys_ = zip(*pts)
-                n = len(xs_)
-                sx = sum(xs_)
-                sy = sum(ys_)
-                sxx = sum(x * x for x in xs_)
-                sxy = sum(x * y for x, y in pts)
-                denom = n * sxx - sx * sx
-                if denom != 0:
-                    a = (n * sxy - sx * sy) / denom
-                    b = (sy - a * sx) / n
-                    yhat = [a * x + b for x in xs_used]
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x_dt,
-                            y=yhat,
-                            mode="lines",
-                            name=f"{y1} trend",
-                            yaxis="y1",
-                            line={"dash": "dash", "color": "#555"},
-                            showlegend=True,
-                        )
-                    )
     elif style == "bar":
         fig.add_trace(
             go.Bar(
@@ -1025,23 +997,26 @@ def repl(db_path: Path, outdir: Path):
             epoch_window = (start_epoch, end_epoch)
 
         # Chart type
-        style = prompt_choice("\nSelect chart type:", ["line", "scatter", "bar"])
+        options = ["line", "scatter", "bar"]
+        if y2:
+            cinfo(
+                "Note: 'bar' is single-series only; disabled when two columns are selected."
+            )
+            style = prompt_choice_with_disabled(
+                "\nSelect chart type:", options, {"bar"}
+            )
+        else:
+            style = prompt_choice("\nSelect chart type:", options)
         bar_mode = "group"
         line_layout = "overlay"
-        scatter_trend = False
         if style == "bar":
-            # One series only for bar charts
-            if y2:
-                cwarn("Bar charts support one series; removing secondary column.")
-                y2 = None
-            # Layout only matters if two bars; keep prompt for consistency
+            # Only one series allowed; already enforced by disabling bar when y2 chosen
             bar_mode = prompt_choice(
                 "Bar layout:", ["side-by-side", "overlay"]
             ).replace("side-by-side", "group")
         elif style == "line" and y2:
             line_layout = prompt_choice("Line layout:", ["overlay", "stacked"]).lower()
-        elif style == "scatter":
-            scatter_trend = prompt_yes_no("Add best-fit trend line?", default=False)
+        # scatter: no trendline (disabled)
 
         # Timestamp display format
         tzmode = prompt_choice("\nTimestamp display:", ["LOCAL", "UTC", "OFFSET"])
@@ -1068,12 +1043,8 @@ def repl(db_path: Path, outdir: Path):
                     break
                 cwarn("Enter a positive integer (e.g., 3, 5, 10).")
 
-        # Line shape for binary series
+        # Line shape for boolean series: always use step-lines (no prompt)
         step_for_binary = True
-        if style == "line":
-            step_for_binary = prompt_yes_no(
-                "Use step lines for boolean (0/1) series?", default=True
-            )
 
         # Fetch and render
         y_cols = [y1] + ([y2] if y2 else [])
@@ -1096,6 +1067,7 @@ def repl(db_path: Path, outdir: Path):
             bar_mode=bar_mode,
             smooth_window=smooth_window,
             step_for_binary=step_for_binary,
+            line_layout=line_layout,
         )
         try:
             cgood(f"HTML written: {html_path.resolve()}")
@@ -1135,16 +1107,36 @@ def repl(db_path: Path, outdir: Path):
                     if (step_for_binary and binary_map.get(y1name, False))
                     else "linear"
                 )
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_dt,
-                        y=ys_used[y1name],
-                        mode="lines+markers",
-                        name=y1name,
-                        yaxis="y1",
-                        line_shape=shape1,
+                if line_layout.startswith("stack") and y2:
+                    fig = make_subplots(
+                        rows=2,
+                        cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.07,
+                        subplot_titles=(y1name, y2),
                     )
-                )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_dt,
+                            y=ys_used[y1name],
+                            mode="lines+markers",
+                            name=y1name,
+                            line_shape=shape1,
+                        ),
+                        row=1,
+                        col=1,
+                    )
+                else:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_dt,
+                            y=ys_used[y1name],
+                            mode="lines+markers",
+                            name=y1name,
+                            yaxis="y1",
+                            line_shape=shape1,
+                        )
+                    )
             elif style == "scatter":
                 fig.add_trace(
                     go.Scatter(
@@ -1285,12 +1277,17 @@ def repl(db_path: Path, outdir: Path):
 
             return fig
 
-        png_path = maybe_export_png(html_path, fig_factory)
-        if png_path:
-            try:
-                cgood(f"PNG written:  {png_path.resolve()}")
-            except Exception:
-                cgood(f"PNG written:  {png_path}")
+        # Disable PNG export for stacked line layout
+        allow_png = not (style == "line" and y2 and line_layout.startswith("stack"))
+        if allow_png:
+            png_path = maybe_export_png(html_path, fig_factory)
+            if png_path:
+                try:
+                    cgood(f"PNG written:  {png_path.resolve()}")
+                except Exception:
+                    cgood(f"PNG written:  {png_path}")
+        else:
+            cinfo("PNG export disabled for stacked line layout (HTML only).")
 
         # Offer to generate another chart for easier testing
         while prompt_yes_no("Create another graph?", default=False):
@@ -1308,13 +1305,54 @@ def repl(db_path: Path, outdir: Path):
                     start_epoch, end_epoch = end_epoch, start_epoch
                 epoch_window = (start_epoch, end_epoch)
 
+            # Optionally change columns
+            if prompt_yes_no("Change columns?", default=False):
+                # Primary
+                print("Select the primary Y-axis column:")
+                for i, c in enumerate(graphable, 1):
+                    print(f"  {i}. {c}")
+                sel = input("> ").strip()
+                if sel.isdigit():
+                    idx = int(sel)
+                    if 1 <= idx <= len(graphable):
+                        y1 = graphable[idx - 1]
+                else:
+                    for c in graphable:
+                        if sel.lower() == c.lower():
+                            y1 = c
+                            break
+                # Secondary
+                y2 = None
+                if prompt_yes_no("Add a secondary Y-axis column?", default=False):
+                    if len(graphable) <= 1:
+                        cwarn("No second numeric column available.")
+                    else:
+                        y2 = prompt_choice_with_disabled(
+                            "Select the secondary Y-axis column:", graphable, {y1}
+                        )
+
             # Chart type and layout
-            style = prompt_choice("\nSelect chart type:", ["line", "scatter", "bar"])
+            options = ["line", "scatter", "bar"]
+            if y2:
+                cinfo(
+                    "Note: 'bar' is single-series only; disabled when two columns are selected."
+                )
+                style = prompt_choice_with_disabled(
+                    "\nSelect chart type:", options, {"bar"}
+                )
+            else:
+                style = prompt_choice("\nSelect chart type:", options)
             bar_mode = "group"
+            line_layout = "overlay"
             if style == "bar":
                 bar_mode = prompt_choice(
                     "Bar layout:", ["side-by-side", "overlay"]
                 ).replace("side-by-side", "group")
+            elif style == "line" and y2:
+                line_layout = prompt_choice(
+                    "Line layout:", ["overlay", "stacked"]
+                ).lower()
+            # scatter: no trendline (disabled)
 
             # Timestamp display format
             tzmode = prompt_choice("\nTimestamp display:", ["LOCAL", "UTC", "OFFSET"])
@@ -1343,12 +1381,8 @@ def repl(db_path: Path, outdir: Path):
                         break
                     cwarn("Enter a positive integer (e.g., 3, 5, 10).")
 
-            # Line shape for binary series
+            # Binary series use step lines automatically
             step_for_binary = True
-            if style == "line":
-                step_for_binary = prompt_yes_no(
-                    "Use step lines for boolean (0/1) series?", default=True
-                )
 
             # Fetch and render
             y_cols = [y1] + ([y2] if y2 else [])
@@ -1371,7 +1405,6 @@ def repl(db_path: Path, outdir: Path):
                 smooth_window=smooth_window,
                 step_for_binary=step_for_binary,
                 line_layout=line_layout,
-                scatter_trend=scatter_trend,
             )
             try:
                 cgood(f"HTML written: {html_path.resolve()}")
@@ -1446,35 +1479,6 @@ def repl(db_path: Path, outdir: Path):
                             yaxis="y1",
                         )
                     )
-                    if scatter_trend:
-                        pts = [
-                            (xs_used[i], float(ys_used[y1name][i]))
-                            for i in range(min(len(xs_used), len(ys_used[y1name])))
-                            if ys_used[y1name][i] is not None
-                        ]
-                        if len(pts) >= 2:
-                            xs_, ys_ = zip(*pts)
-                            n = len(xs_)
-                            sx = sum(xs_)
-                            sy = sum(ys_)
-                            sxx = sum(x * x for x in xs_)
-                            sxy = sum(x * y for x, y in pts)
-                            denom = n * sxx - sx * sx
-                            if denom != 0:
-                                a = (n * sxy - sx * sy) / denom
-                                b = (sy - a * sx) / n
-                                yhat = [a * x + b for x in xs_used]
-                                fig.add_trace(
-                                    go.Scatter(
-                                        x=x_dt,
-                                        y=yhat,
-                                        mode="lines",
-                                        name=f"{y1name} trend",
-                                        yaxis="y1",
-                                        line={"dash": "dash", "color": "#555"},
-                                        showlegend=True,
-                                    )
-                                )
                 elif style == "bar":
                     fig.add_trace(
                         go.Bar(
@@ -1592,12 +1596,16 @@ def repl(db_path: Path, outdir: Path):
                     )
                 return fig
 
-            png_path = maybe_export_png(html_path, fig_factory_again)
-            if png_path:
-                try:
-                    cgood(f"PNG written:  {png_path.resolve()}")
-                except Exception:
-                    cgood(f"PNG written:  {png_path}")
+            allow_png = not (style == "line" and y2 and line_layout.startswith("stack"))
+            if allow_png:
+                png_path = maybe_export_png(html_path, fig_factory_again)
+                if png_path:
+                    try:
+                        cgood(f"PNG written:  {png_path.resolve()}")
+                    except Exception:
+                        cgood(f"PNG written:  {png_path}")
+            else:
+                cinfo("PNG export disabled for stacked line layout (HTML only).")
             # Loop again or exit while handled at top
 
     finally:
