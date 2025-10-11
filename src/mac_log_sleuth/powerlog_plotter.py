@@ -352,19 +352,33 @@ def prompt_yes_no(prompt: str, default: bool | None = None) -> bool:
 
 
 def prompt_choice_with_disabled(
-    prompt: str, options: list[str], disabled: set[str]
+    prompt: str,
+    options: list[str],
+    disabled: dict[str, str] | set[str] | None = None,
 ) -> str:
-    """Prompt for a choice but disallow any in disabled.
-    Matching is case-insensitive, and disabled options are shown in gray.
+    """Prompt for a choice but disallow any in ``disabled``.
+
+    ``disabled`` may be a set of option labels or a dict mapping label to a reason.
+    Matching is case-insensitive, and disabled options are shown in gray with the reason.
     """
-    disabled_lower = {d.lower() for d in disabled}
+
+    if disabled is None:
+        disabled_map: dict[str, str] = {}
+    elif isinstance(disabled, set):
+        disabled_map = dict.fromkeys(disabled, "(disabled)")
+    else:
+        disabled_map = dict(disabled)
+
     while True:
         print(prompt)
         for i, opt in enumerate(options, 1):
-            if opt.lower() in disabled_lower:
-                print(f"  {i}. {C.FG.GRAY}{opt} (disabled){C.RESET}")
+            note = disabled_map.get(opt, "")
+            if opt in disabled_map:
+                extra = f" {note}" if note else ""
+                print(f"  {i}. {C.FG.GRAY}{opt}{extra}{C.RESET}")
             else:
                 print(f"  {i}. {opt}")
+
         s = input("> ").strip()
         choice: str | None = None
         if s.isdigit():
@@ -379,8 +393,9 @@ def prompt_choice_with_disabled(
         if not choice:
             cwarn("Invalid selection. Try again.")
             continue
-        if choice.lower() in disabled_lower:
-            cwarn("That option is disabled. Choose another.")
+        if choice in disabled_map:
+            reason = disabled_map[choice]
+            cwarn(f"That option is disabled {reason if reason else ''}.")
             continue
         return choice
 
@@ -503,60 +518,30 @@ def prompt_series_selection(
 
 
 def prompt_chart_type_for_selection(count: int) -> str:
-    """Offer chart types with contextual disabling based on series count.
-    Returns one of: 'line-overlay', 'line-stacked', 'scatter', 'bar'.
-    """
-    base = [
-        ("line-overlay", None),
-        ("line-stacked", None),
-        ("scatter", None),
-        ("bar", None),
-    ]
+    """Offer chart types with contextual disabling based on series count."""
+
+    if count <= 1:
+        choice = prompt_choice_with_disabled(
+            "\nChart type:", ["line", "scatter", "bar"]
+        )
+        return choice
+
+    labels = ["overlay line", "stacked line", "scatter", "bar"]
     disabled: dict[str, str] = {}
     if count > 1:
         disabled["bar"] = "(1 datatype max)"
     if count > 2:
-        disabled["line-overlay"] = "(max 2)"
+        disabled["overlay line"] = "(max 2)"
         disabled["scatter"] = "(max 2)"
 
-    # Compose options with labels
-    options: list[str] = []
-    disabled_set: set[str] = set()
-    for key, _ in base:
-        if key in disabled:
-            label = {
-                "line-overlay": f"overlay line {disabled[key]}",
-                "line-stacked": "stacked line",
-                "scatter": f"scatter {disabled[key]}",
-                "bar": f"bar {disabled[key]}",
-            }[key]
-            options.append(label)
-            disabled_set.add(label)
-        else:
-            label = {
-                "line-overlay": "overlay line",
-                "line-stacked": "stacked line",
-                "scatter": "scatter",
-                "bar": "bar",
-            }[key]
-            options.append(label)
-
-    # Map label back to key
-    label_to_key = {
+    choice = prompt_choice_with_disabled("\nChart type:", labels, disabled)
+    mapping = {
         "overlay line": "line-overlay",
         "stacked line": "line-stacked",
         "scatter": "scatter",
         "bar": "bar",
     }
-    # For disabled labels, keep same mapping
-    for k, v in list(label_to_key.items()):
-        if k + " (1 datatype max)" in options:
-            label_to_key[k + " (1 datatype max)"] = v
-        if k + " (max 2)" in options:
-            label_to_key[k + " (max 2)"] = v
-
-    choice = prompt_choice_with_disabled("\nChart type:", options, disabled_set)
-    return label_to_key[choice]
+    return mapping[choice]
 
 
 def prompt_epoch_window() -> tuple[float | None, float | None]:
@@ -874,11 +859,7 @@ def render_stacked_lines(
     # Pre-process and convert times
     rows = len(panels)
     fig = make_subplots(
-        rows=rows,
-        cols=1,
-        shared_xaxes=False,  # show date ticks on every panel
-        vertical_spacing=0.06,
-        subplot_titles=tuple(p["label"] for p in panels),
+        rows=rows, cols=1, shared_xaxes=False, vertical_spacing=0.06
     )
     for i, p in enumerate(panels, start=1):
         xs = p.get("xs", [])
@@ -903,13 +884,15 @@ def render_stacked_lines(
             row=i,
             col=1,
         )
-        # No y-axis title to avoid long vertical labels; titles are in subplot headers
+        # Add a y-axis title per panel
+        fig.update_yaxes(title_text=p["label"], row=i, col=1, automargin=True)
         # Ensure each panel shows its own time ticks
         fig.update_xaxes(showticklabels=True, row=i, col=1, automargin=True)
 
     # Layout and footer
     fig.update_layout(
         title=f"{base_title} — Stacked Lines ({rows})",
+        showlegend=True,
         legend={
             "orientation": "h",
             "yanchor": "top",
@@ -1431,7 +1414,7 @@ def repl(db_path: Path, outdir: Path):
                     return
                 style = (
                     "line"
-                    if chart_key == "line-overlay"
+                    if chart_key in ("line-overlay", "line")
                     else ("scatter" if chart_key == "scatter" else "bar")
                 )
                 labels = list(ys_union.keys())
