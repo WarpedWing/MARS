@@ -31,6 +31,7 @@ import argparse
 import bz2
 import contextlib
 import gzip
+import platform
 import shutil
 import sqlite3
 import subprocess
@@ -57,10 +58,44 @@ OUT_UNSALV = OUTPUT_ROOT / "unsalvageable"
 OUT_RECOVERED_SQLITE = OUTPUT_ROOT / "recovered_sqlite"
 
 
-# Path to gzrecover binary (local next to the script, or from PATH)
-UTILS_DIR = Path(__file__).parent / "utils"
-GZRECOVER_PATH = shutil.which("gzrecover") or (UTILS_DIR / "gzrecover")
-SQLITE_DISSECT_PATH = shutil.which("sqlite_dissect") or (UTILS_DIR / "sqlite_dissect")
+# Path to gzrecover and sqlite_dissect binaries (OS-specific)
+def get_binary_path(binary_name: str) -> Path | None:
+    """Get OS-specific binary path for packaging.
+
+    Supports macOS and Windows with bundled binaries.
+    For Linux or other platforms, only checks PATH.
+    """
+    # First check if binary is in PATH
+    path_binary = shutil.which(binary_name)
+    if path_binary:
+        return Path(path_binary)
+
+    # Determine OS-specific subdirectory (only macOS and Windows have bundled binaries)
+    system = platform.system().lower()
+    if system == "darwin":
+        os_dir = "macos"
+        ext = ""
+    elif system == "windows":
+        os_dir = "windows"
+        ext = ".exe"
+    else:
+        # Linux and other platforms: no bundled binaries available
+        # User must have binaries in PATH or install them manually
+        return None
+
+    # Check in resources/bin/<os>/ directory
+    resources_path = (
+        Path(__file__).parent.parent
+        / "resources"
+        / "bin"
+        / os_dir
+        / f"{binary_name}{ext}"
+    )
+    return resources_path if resources_path.exists() else None
+
+
+GZRECOVER_PATH = get_binary_path("gzrecover")
+SQLITE_DISSECT_PATH = get_binary_path("sqlite_dissect")
 
 CATEGORIES = {
     "Firefox": ["moz_"],
@@ -388,8 +423,7 @@ def try_sqlite_dissect(db_path: Path) -> Path | None:
     Creates a carved SQLite DB in OUT_RECOVERED.
     Returns the new DB path or None if failed/unavailable.
     """
-    dissect_path = Path(SQLITE_DISSECT_PATH) if SQLITE_DISSECT_PATH else None
-    if not dissect_path or not dissect_path.exists():
+    if not SQLITE_DISSECT_PATH or not SQLITE_DISSECT_PATH.exists():
         print(
             f"    Warning: sqlite_dissect CLI not found (looked for {SQLITE_DISSECT_PATH})."
         )
@@ -400,7 +434,7 @@ def try_sqlite_dissect(db_path: Path) -> Path | None:
     dst_db = dst_dir / (db_path.stem + "_dissect.sqlite")
 
     cmd = [
-        str(dissect_path),
+        str(SQLITE_DISSECT_PATH),
         str(db_path),
         "-d",
         str(dst_dir),
@@ -582,18 +616,19 @@ def process_gz(path: Path):
     except (gzip.BadGzipFile, OSError, EOFError) as e:
         print(f"  Warning: Gzip decompression failed: {path.name} ({e})")
 
-        gzrec = Path(GZRECOVER_PATH)
         OUT_CORRUPT_GZ.mkdir(parents=True, exist_ok=True)
 
-        if gzrec.exists():
+        if GZRECOVER_PATH and GZRECOVER_PATH.exists():
             try:
                 recovered_base = path.stem + "_gzrecover.recovered"
                 recovered_out = OUT_CORRUPT_GZ / recovered_base
-                print(f"    [INFO] Attempting to recover with gzrecover: {gzrec}")
+                print(
+                    f"    [INFO] Attempting to recover with gzrecover: {GZRECOVER_PATH}"
+                )
 
                 subprocess.run(
                     [
-                        str(gzrec),
+                        str(GZRECOVER_PATH),
                         "-o",
                         recovered_out.name,
                         str(path.resolve()),
@@ -660,7 +695,7 @@ def process_gz(path: Path):
                 print(f"    Warning: gzrecover error: {e3}")
 
         else:
-            print(f"    Warning: gzrecover not found at {gzrec}; quarantining file.")
+            print("    Warning: gzrecover not found; quarantining file.")
 
         # If we reach here, nothing worked → quarantine the .gz itself
         print(
@@ -1024,15 +1059,15 @@ def main() -> None:
     configure_paths(input_dir, output_root)
     prepare_output_dirs()
 
-    gz_path = Path(GZRECOVER_PATH) if GZRECOVER_PATH else None
     z_path_status = (
-        f"{gz_path} (missing)" if not gz_path or not gz_path.exists() else str(gz_path)
+        f"{GZRECOVER_PATH} (missing)"
+        if not GZRECOVER_PATH or not GZRECOVER_PATH.exists()
+        else str(GZRECOVER_PATH)
     )
-    dissect_path = Path(SQLITE_DISSECT_PATH) if SQLITE_DISSECT_PATH else None
     dissect_status = (
-        f"{dissect_path} (missing)"
-        if not dissect_path or not dissect_path.exists()
-        else str(dissect_path)
+        f"{SQLITE_DISSECT_PATH} (missing)"
+        if not SQLITE_DISSECT_PATH or not SQLITE_DISSECT_PATH.exists()
+        else str(SQLITE_DISSECT_PATH)
     )
 
     print(f"Source directory: {SRC_DIR}")

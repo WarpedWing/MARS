@@ -1,2 +1,0 @@
-gzrecover filter=lfs diff=lfs merge=lfs -text
-sqlite_dissect filter=lfs diff=lfs merge=lfs -text
