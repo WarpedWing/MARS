@@ -8,6 +8,10 @@ dependencies = [
     "plotly>=6.3.1",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project.optional-dependencies]
 plotly = [
     "pandas>=2.3.3",

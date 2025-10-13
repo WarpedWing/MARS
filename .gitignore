@@ -15,6 +15,7 @@ Icon?
 __pycache__/
 *.py[cod]
 *$py.class
+.python-version
 
 # Virtual environments
 .venv/
