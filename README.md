@@ -8,5 +8,6 @@ Coming soon.
 
 ## MacOS Powerlog locations
 
-- `/private/var/db/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL` (& `-shm` & `-wal`)
+- `/private/var/db/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL`
+  - (& `-shm` & `-wal`)
 - `/private/var/db/powerlog/Library/BatteryLife/Archives/*.gz` (gzipped logs)
