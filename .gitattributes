@@ -1,3 +1,4 @@
 src/resources/bin/**/*.exe filter=lfs diff=lfs merge=lfs -text
 src/resources/bin/**/gzrecover filter=lfs diff=lfs merge=lfs -text
+src/resources/bin/**/bzip2recover filter=lfs diff=lfs merge=lfs -text
 src/resources/bin/**/sqlite_dissect filter=lfs diff=lfs merge=lfs -text
