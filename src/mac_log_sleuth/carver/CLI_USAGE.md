@@ -14,7 +14,7 @@ python3 carve_sqlite.py /path/to/corrupt_database.sqlite
 ```
 
 This will:
-- Check database integrity and warn if intact
+
 - Carve all pages for timestamps, URLs, text, and protobufs
 - Use "balanced" filtering mode (confirmed + likely timestamps)
 - Output to `Carved/{dbname}_{timestamp}/` in same directory as source database
@@ -69,6 +69,7 @@ python3 carve_sqlite.py database.sqlite \
 ```
 
 **Use Cases:**
+
 - **Incident response**: Focus on incident timeframe (e.g., 2024-03-01 to 2024-03-31)
 - **Historical analysis**: Filter out modern timestamps in old data
 - **Noise reduction**: Exclude obviously invalid timestamps
@@ -101,6 +102,7 @@ python3 carve_sqlite.py database.sqlite --no-pretty-protobuf
 ```
 
 **Protobuf Filtering:**
+
 - Automatically filters out garbage protobufs with generic field names (`f1`, `f2`, etc.)
 - Keeps protobufs with timestamp fields (`endTime`, `expiry`, etc.)
 - Keeps protobufs with significant structure (10+ meaningful fields)
@@ -115,6 +117,7 @@ python3 carve_sqlite.py database.sqlite --no-cluster
 ```
 
 **Clustering Benefits:**
+
 - Groups related data from fragmented pages
 - Identifies patterns across multiple pages
 - **Default: Enabled** (recommended for most use cases)
@@ -225,16 +228,16 @@ OUTPUT_DIR := /cases/case-123
 
 .PHONY: carve
 carve:
-	@for db in $(EVIDENCE_DIR)/*.sqlite; do \
-		python3 carve_sqlite.py $$db \
-			--filter-mode balanced \
-			--output-dir $(OUTPUT_DIR)/carved; \
-	done
+ @for db in $(EVIDENCE_DIR)/*.sqlite; do \
+  python3 carve_sqlite.py $$db \
+   --filter-mode balanced \
+   --output-dir $(OUTPUT_DIR)/carved; \
+ done
 
 .PHONY: analyze
 analyze: carve
-	python3 analyze_timestamps.py $(OUTPUT_DIR)/carved
-	python3 generate_report.py $(OUTPUT_DIR)
+ python3 analyze_timestamps.py $(OUTPUT_DIR)/carved
+ python3 generate_report.py $(OUTPUT_DIR)
 ```
 
 ## Output Format Details
@@ -304,11 +307,13 @@ When you run the carver on an **intact** (non-corrupt) database, you'll see this
 ```
 
 **What This Means:**
+
 - The database can be queried normally with `sqlite3` or DB Browser
 - Using the carver on intact databases is unnecessary and slow
 - You should use standard SQL queries instead
 
 **To Query Intact Databases:**
+
 ```bash
 # Use sqlite3 CLI
 sqlite3 database.sqlite "SELECT * FROM table_name"
@@ -322,6 +327,7 @@ sqlite3 database.sqlite "SELECT * FROM table_name"
 The carver detects these timestamp formats:
 
 ### Decimal Formats
+
 - **Unix seconds**: 1609459200 → 2021-01-01 00:00:00 GMT
 - **Unix milliseconds**: 1609459200000 → 2021-01-01 00:00:00 GMT
 - **Unix microseconds**: 1609459200000000 → 2021-01-01 00:00:00 GMT
@@ -331,10 +337,12 @@ The carver detects these timestamp formats:
 - **WebKit microseconds**: 13258032000000000 → 2021-01-01 00:00:00 GMT (since 1601)
 
 ### Hexadecimal Formats (NEW)
+
 - **Hex Unix timestamps**: 5b994548 → 1536771400 → 2018-09-12 16:56:40 GMT
 - **Hex pairs**: 5b994548.5ad909e0 → Two separate timestamps
 
 **Example hex timestamp:**
+
 ```
 Input bytes:  5b 99 45 48 2e 5a d9 09 e0
 ASCII:        [ \x99 E H  .  Z \xd9 \t \xe0
@@ -370,6 +378,7 @@ The V2 classifier uses these categories:
 **Problem:** Running carver on intact macOS powerlog shows "no timestamps found"
 
 **Solution:** The database is not corrupt! Use standard SQLite queries instead:
+
 ```bash
 # Query the powerlog directly
 sqlite3 powerlog.sqlite "SELECT * FROM PLBatteryAgent_EventBackward_Battery LIMIT 10"
@@ -382,6 +391,7 @@ The carver is designed for **corrupt or deleted** SQLite files where normal quer
 **Problem:** Getting too many IDs classified as timestamps
 
 **Solution:** Use stricter filtering:
+
 ```bash
 python3 carve_sqlite.py database.sqlite --filter-mode strict
 ```
@@ -391,6 +401,7 @@ python3 carve_sqlite.py database.sqlite --filter-mode strict
 **Problem:** Known timestamps not appearing in output
 
 **Solution:** Use permissive or all mode:
+
 ```bash
 python3 carve_sqlite.py database.sqlite --filter-mode all
 ```
@@ -404,11 +415,13 @@ python3 carve_sqlite.py database.sqlite --filter-mode all
 ## Dependencies
 
 Required Python packages:
+
 - `unfurl` (URL timestamp extraction)
 - `time_decode` (timestamp format detection)
 - Standard library: `sqlite3`, `argparse`, `datetime`, `pathlib`, `csv`, `json`
 
 Install dependencies:
+
 ```bash
 pip install unfurl-app time-decode
 ```
@@ -420,6 +433,7 @@ By WarpedWing Labs
 ## Support
 
 For issues, feature requests, or questions:
+
 - File an issue on GitHub
 - Check existing documentation in the `carver/` directory
 - Review `V2_SYSTEM_OVERVIEW.md` for technical details

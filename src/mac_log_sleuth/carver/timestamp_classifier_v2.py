@@ -12,21 +12,38 @@ from __future__ import annotations
 
 import re
 
-from id_detectors import detect_id_pattern
+try:
+    from .id_detectors import detect_id_pattern
+except ImportError:
+    from id_detectors import detect_id_pattern
 
 # Import our modules
-from timestamp_classifier import (
-    REASON_FIELD_NAME_ID,
-    REASON_FIELD_NAME_TIMESTAMP,
-    REASON_NO_VALID_FORMAT,
-    REASON_SNOWFLAKE_STRUCTURE,
-    REASON_URL_ID_FIELD,
-    REASON_URL_PARAM_TIMESTAMP,
-    REASON_VALID_FORMAT_NO_CONTEXT,
-    TimestampClassification,
-    TimestampFindings,
-)
-from url_analyzer import URLContext, analyze_urls_in_page
+try:
+    from .timestamp_classifier import (
+        REASON_FIELD_NAME_ID,
+        REASON_FIELD_NAME_TIMESTAMP,
+        REASON_NO_VALID_FORMAT,
+        REASON_SNOWFLAKE_STRUCTURE,
+        REASON_URL_ID_FIELD,
+        REASON_URL_PARAM_TIMESTAMP,
+        REASON_VALID_FORMAT_NO_CONTEXT,
+        TimestampClassification,
+        TimestampFindings,
+    )
+    from .url_analyzer import URLContext, analyze_urls_in_page
+except ImportError:
+    from timestamp_classifier import (
+        REASON_FIELD_NAME_ID,
+        REASON_FIELD_NAME_TIMESTAMP,
+        REASON_NO_VALID_FORMAT,
+        REASON_SNOWFLAKE_STRUCTURE,
+        REASON_URL_ID_FIELD,
+        REASON_URL_PARAM_TIMESTAMP,
+        REASON_VALID_FORMAT_NO_CONTEXT,
+        TimestampClassification,
+        TimestampFindings,
+    )
+    from url_analyzer import URLContext, analyze_urls_in_page
 
 # Try to import time_decode
 try:
@@ -77,6 +94,14 @@ ID_FIELD_KEYWORDS = [
     b"session_id",
     b"token",
     b"key",
+]
+
+# Special fields that are IDs but may contain embedded timestamps
+# These should be logged as BOTH an ID and a potential timestamp
+DUAL_NATURE_FIELDS = [
+    b"notif_id",  # Facebook notification IDs (often unix_micro)
+    b"notification_id",  # May contain timestamps on some platforms
+    b"event_id",  # Some platforms embed timestamps in event IDs
 ]
 
 FIELD_PATTERN = re.compile(rb"([a-zA-Z_][a-zA-Z0-9_]{2,30})[\s\x00]*[:=]")
@@ -306,6 +331,7 @@ def classify_page_timestamps(
 
     Returns:
         List of TimestampFindings with classifications
+        Note: Some values may appear twice if they have dual nature (ID + timestamp)
     """
     # Build URL context
     url_context = analyze_urls_in_page(page, url_offsets)
@@ -325,5 +351,56 @@ def classify_page_timestamps(
             all_values=all_values,
         )
         results.append(finding)
+
+        # Check if this is a dual-nature field (ID that may contain timestamp)
+        if finding.classification == TimestampClassification.CONFIRMED_ID:
+            # Check field name
+            field_name = extract_field_name(page, offset, lookback=50)
+            if field_name and field_name in DUAL_NATURE_FIELDS:
+                # Also log as a potential timestamp
+                fmt_type, human = format_timestamp_with_time_decode(value)
+                if fmt_type:  # Only if it's a valid timestamp format
+                    timestamp_finding = TimestampFindings(
+                        offset=offset,
+                        value=value,
+                        classification=TimestampClassification.LIKELY_TIMESTAMP,
+                        format_type=fmt_type,
+                        human_readable=human,
+                        reason=f"Dual-nature field '{field_name.decode('utf-8', errors='ignore')}' - ID that may contain embedded timestamp",
+                        source_url=finding.source_url,
+                        field_name=field_name.decode("utf-8", errors="ignore"),
+                    )
+                    results.append(timestamp_finding)
+
+            # Also check URL context for dual-nature params
+            is_url_id, source_url = url_context.is_confirmed_id(value)
+            if is_url_id and source_url:
+                # Check if the URL param name suggests dual nature
+                # Extract param name from URL
+                try:
+                    from urllib.parse import parse_qs, urlparse
+                    parsed = urlparse(source_url)
+                    params = parse_qs(parsed.query)
+                    for param_name, param_values in params.items():
+                        if str(value) in [str(v) for v in param_values]:
+                            param_name_lower = param_name.lower().encode('utf-8')
+                            if param_name_lower in DUAL_NATURE_FIELDS:
+                                # Also log as potential timestamp
+                                fmt_type, human = format_timestamp_with_time_decode(value)
+                                if fmt_type:
+                                    timestamp_finding = TimestampFindings(
+                                        offset=offset,
+                                        value=value,
+                                        classification=TimestampClassification.LIKELY_TIMESTAMP,
+                                        format_type=fmt_type,
+                                        human_readable=human,
+                                        reason=f"Dual-nature URL parameter '{param_name}' - ID that may contain embedded timestamp",
+                                        source_url=source_url,
+                                        field_name=param_name,
+                                    )
+                                    results.append(timestamp_finding)
+                                    break
+                except Exception:
+                    pass  # If URL parsing fails, skip dual-nature check
 
     return results

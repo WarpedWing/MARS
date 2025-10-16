@@ -126,6 +126,39 @@ def read_sqlite_header_info(fp: Path) -> tuple[int, str, int]:
     return page_size, encoding, int(pages)
 
 
+def check_schema_has_blobs(fp: Path) -> bool:
+    """
+    Check if the database schema contains any BLOB columns.
+
+    Returns True if any table has a BLOB column, False otherwise.
+    This helps avoid false positive protobuf detection in databases
+    that never stored binary data.
+    """
+    try:
+        conn = sqlite3.connect(str(fp))
+        cursor = conn.cursor()
+
+        # Get all table schemas
+        cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
+        )
+
+        for (sql,) in cursor.fetchall():
+            if sql:
+                # Case-insensitive search for BLOB column type
+                sql_upper = sql.upper()
+                if " BLOB" in sql_upper or "\tBLOB" in sql_upper or "(BLOB" in sql_upper:
+                    conn.close()
+                    return True
+
+        conn.close()
+        return False
+
+    except Exception:
+        # If we can't read the schema (corrupted DB, etc.), assume no blobs
+        return False
+
+
 def to_gmt_str(epoch: float) -> str:
     # Takes input float and returns human-readable GMT datetime string
     try:
@@ -466,7 +499,12 @@ def main():
     ap = argparse.ArgumentParser(description="SQLite Carver (forensic)")
     ap.add_argument("db", help="SQLite file to carve")
     ap.add_argument("--no-cluster", action="store_true", help="Disable page clustering")
-    ap.add_argument("--no-protobuf", action="store_true", help="Skip protobuf decoding")
+    ap.add_argument("--no-protobuf", action="store_true", help="Skip protobuf decoding entirely")
+    ap.add_argument(
+        "--force-protobuf",
+        action="store_true",
+        help="Force protobuf decoding even if schema has no BLOB columns (may produce false positives)",
+    )
     ap.add_argument(
         "--no-pretty-protobuf",
         action="store_true",
@@ -519,6 +557,18 @@ def main():
 
     page_size, encoding, page_count = read_sqlite_header_info(src)
 
+    # Check if schema has BLOB columns (to avoid false positive protobufs)
+    schema_has_blobs = check_schema_has_blobs(src)
+
+    # Determine if we should decode protobufs
+    # Logic:
+    # - If --no-protobuf: never decode
+    # - If --force-protobuf: always decode
+    # - Otherwise: only decode if schema has BLOBs
+    should_decode_protobuf = (
+        not args.no_protobuf and (args.force_protobuf or schema_has_blobs)
+    )
+
     # Determine output directory (default: same directory as source database)
     output_base = Path(args.output_dir) if args.output_dir else src.parent
 
@@ -541,6 +591,31 @@ def main():
         f"{ANSI_CYAN}[•]{ANSI_RESET} Page size: {page_size} bytes  |  Encoding: {encoding}"
     )
     print(f"{ANSI_CYAN}[•]{ANSI_RESET} Timestamp filter mode: {args.filter_mode}")
+
+    # Protobuf status reporting
+    if should_decode_protobuf:
+        if schema_has_blobs:
+            print(
+                f"{ANSI_GREEN}[+]{ANSI_RESET} Schema contains BLOBs - "
+                "protobuf decoding enabled"
+            )
+        else:
+            print(
+                f"{ANSI_YELLOW}[!]{ANSI_RESET} Protobuf decoding forced "
+                "(schema has no BLOBs - may produce false positives)"
+            )
+    else:
+        if args.no_protobuf:
+            print(
+                f"{ANSI_CYAN}[•]{ANSI_RESET} "
+                "Protobuf decoding disabled by --no-protobuf"
+            )
+        else:
+            print(
+                f"{ANSI_CYAN}[•]{ANSI_RESET} Schema has no BLOBs - "
+                "protobuf decoding skipped (use --force-protobuf to override)"
+            )
+
     if CLASSIFIER_V2_AVAILABLE:
         print(f"{ANSI_GREEN}[+]{ANSI_RESET} Using V2 classifier (Unfurl + time_decode)")
     else:
@@ -957,7 +1032,7 @@ def main():
 
                 # Protobufs → JSONL
                 if (
-                    not args.no_protobuf
+                    should_decode_protobuf
                     and maybe_decode_protobuf is not None
                     and to_json is not None
                 ):
