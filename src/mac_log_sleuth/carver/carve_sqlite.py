@@ -147,7 +147,11 @@ def check_schema_has_blobs(fp: Path) -> bool:
             if sql:
                 # Case-insensitive search for BLOB column type
                 sql_upper = sql.upper()
-                if " BLOB" in sql_upper or "\tBLOB" in sql_upper or "(BLOB" in sql_upper:
+                if (
+                    " BLOB" in sql_upper
+                    or "\tBLOB" in sql_upper
+                    or "(BLOB" in sql_upper
+                ):
                     conn.close()
                     return True
 
@@ -499,7 +503,9 @@ def main():
     ap = argparse.ArgumentParser(description="SQLite Carver (forensic)")
     ap.add_argument("db", help="SQLite file to carve")
     ap.add_argument("--no-cluster", action="store_true", help="Disable page clustering")
-    ap.add_argument("--no-protobuf", action="store_true", help="Skip protobuf decoding entirely")
+    ap.add_argument(
+        "--no-protobuf", action="store_true", help="Skip protobuf decoding entirely"
+    )
     ap.add_argument(
         "--force-protobuf",
         action="store_true",
@@ -565,8 +571,8 @@ def main():
     # - If --no-protobuf: never decode
     # - If --force-protobuf: always decode
     # - Otherwise: only decode if schema has BLOBs
-    should_decode_protobuf = (
-        not args.no_protobuf and (args.force_protobuf or schema_has_blobs)
+    should_decode_protobuf = not args.no_protobuf and (
+        args.force_protobuf or schema_has_blobs
     )
 
     # Determine output directory (default: same directory as source database)
