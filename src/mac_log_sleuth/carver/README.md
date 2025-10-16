@@ -36,33 +36,37 @@ See [TIMESTAMP_VALIDATION.md](TIMESTAMP_VALIDATION.md) for complete documentatio
 ## Features
 
 ### Core Capabilities
-- ✅ Extracts deleted/unallocated SQLite data page by page
-- ✅ Detects timestamps: Unix (sec/ms/μs/ns), Apple Cocoa, WebKit
-- ✅ Extracts URLs, UTF-8 text runs, protobuf blobs
-- ✅ Deduplicates artifacts by absolute file offset
-- ✅ Optional page clustering for grouped analysis
+
+- Extracts deleted/unallocated SQLite data page by page
+- Detects timestamps: Unix (sec/ms/μs/ns), Apple Cocoa, WebKit
+- Extracts URLs, UTF-8 text runs, protobuf blobs
+- Deduplicates artifacts by absolute file offset
+- Optional page clustering for grouped analysis
 
 ### Timestamp Validation (NEW)
-- ✅ Confidence scoring (0.0-1.0) for each timestamp
-- ✅ Context-aware analysis (field names, keywords)
-- ✅ Sequential pattern detection (filters ID sequences)
-- ✅ Temporal clustering detection (timestamp pairs/groups)
-- ✅ Configurable threshold (`--min-confidence`)
+
+- Confidence scoring (0.0-1.0) for each timestamp
+- Context-aware analysis (field names, keywords)
+- Sequential pattern detection (filters ID sequences)
+- Temporal clustering detection (timestamp pairs/groups)
+- Configurable threshold (`--min-confidence`)
 
 ### Performance & Reliability
-- ✅ Batch commits every 100 pages (crash recovery)
-- ✅ Memory-efficient streaming (handles multi-GB files)
-- ✅ Graceful error handling (continues on page errors)
-- ✅ Progress bar with real-time updates
+
+- Batch commits every 100 pages (crash recovery)
+- Memory-efficient streaming (handles multi-GB files)
+- Graceful error handling (continues on page errors)
+- Progress bar with real-time updates
 
 ### Output
-- ✅ SQLite database: `Carved/<db>_<timestamp>_Carved_Recovered.sqlite`
-- ✅ CSV export: `carved_all.csv` (includes confidence scores)
-- ✅ Protobuf JSON Lines: `carved_protobufs.jsonl`
+
+- SQLite database: `Carved/<db>_<timestamp>_Carved_Recovered.sqlite`
+- CSV export: `carved_all.csv` (includes confidence scores)
+- Protobuf JSON Lines: `carved_protobufs.jsonl`
 
 ## Command-Line Options
 
-```
+```bash
 positional arguments:
   db                    SQLite file to carve
 
@@ -158,24 +162,28 @@ LIMIT 100;
 ## Use Cases
 
 ### Social Media Forensics
+
 ```bash
 # Facebook/Instagram: Heavy ID pollution
 python carve_sqlite.py facebook_messages.db --min-confidence 0.7
 ```
 
 ### Browser History Analysis
+
 ```bash
 # Chrome/Firefox: Mix of timestamps and IDs
 python carve_sqlite.py places.sqlite --min-confidence 0.5
 ```
 
 ### System Forensics
+
 ```bash
 # macOS/iOS databases: Usually clean timestamps
 python carve_sqlite.py fsevents.db --min-confidence 0.4
 ```
 
 ### Exploratory Analysis
+
 ```bash
 # Unknown database: See everything first
 python carve_sqlite.py unknown.db --min-confidence 0.0
@@ -186,7 +194,7 @@ python carve_sqlite.py unknown.db --min-confidence 0.6
 
 ## Architecture
 
-```
+```bash
 carver/
 ├── carve_sqlite.py           # Main carver (orchestrates everything)
 ├── timestamp_validator.py    # Confidence scoring engine
@@ -199,6 +207,7 @@ carver/
 ## Version History
 
 ### v3.4 (Latest)
+
 - **NEW: Timestamp confidence scoring**
 - Filters Snowflake IDs, Facebook IDs, and other timestamp-like values
 - Context-aware analysis (field names, keywords)
@@ -207,6 +216,7 @@ carver/
 - Updated schema with `ts_confidence` column
 
 ### v3.3
+
 - Batch commits for crash recovery
 - Memory-efficient CSV streaming
 - Improved deduplication (absolute offsets)
@@ -216,6 +226,7 @@ carver/
 - Removed unnecessary page dumps
 
 ### v3.2
+
 - Initial release with basic carving
 - Timestamp detection (multiple formats)
 - URL and text extraction

@@ -257,8 +257,8 @@ def main():
         with rubric_json_path.open("w", encoding="utf-8") as jf:
             json.dump(rubric, jf, indent=2, ensure_ascii=False)
 
-        print(f"✅ Schema CSV:  {schema_csv_path}")
-        print(f"✅ Rubric JSON: {rubric_json_path}")
+        print(f" Schema CSV:  {schema_csv_path}")
+        print(f" Rubric JSON: {rubric_json_path}")
 
     finally:
         conn.close()
