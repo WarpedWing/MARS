@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 
 """
-SQLite Carver v3.2
+SQLite Carver v3.4
 by WarpedWing Labs
 
-A page-oriented forensic SQLite data carver.
+A page-oriented forensic SQLite data carver with intelligent timestamp validation.
 
 Features:
  - Detects and parses timestamps (Unix, ms, Apple NSDate, WebKit)
+ - **NEW: Confidence scoring to distinguish real timestamps from IDs**
+   - Analyzes context keywords (created_at, modified_at, etc.)
+   - Detects sequential patterns (likely IDs vs scattered timestamps)
+   - Checks for temporal clustering (multiple timestamps nearby)
+   - Filters Snowflake IDs, Facebook IDs, and other timestamp-like values
+ - Configurable confidence threshold (--min-confidence, default: 0.5)
  - Picks the *likeliest* interpretation (closest to now; unix wins ties)
  - Converts timestamps to human-readable GMT (ts_human)
  - Extracts URLs, UTF-8 text, and protobuf blobs
- - Deduplicates and clusters pages (unless --no-cluster)
+ - Deduplicates by absolute offset across all artifact types
+ - Clusters pages (unless --no-cluster)
+ - Batch commits for memory efficiency and crash recovery
+ - Configurable timestamp validity range (--ts-start, --ts-end)
  - Outputs:
-     • Carved/<base>_<UTC>/Carved_Recovered.sqlite
-     • Carved/<base>_<UTC>/carved_all.csv
+     • Carved/<base>_<UTC>/Carved_Recovered.sqlite (includes ts_confidence column)
+     • Carved/<base>_<UTC>/carved_all.csv (includes ts_confidence column)
      • Carved/<base>_<UTC>/carved_protobufs.jsonl   ← JSON Lines
-     • Carved/<base>_<UTC>/pages/page_XXXX.bin      ← raw page dumps
  - Clean, ANSI-colored progress
  - Protobuf decoding ON by default (disable with --no-protobuf)
 """
@@ -40,6 +48,27 @@ except Exception:
     maybe_decode_protobuf = None
     to_json = None
 
+# Local timestamp validation (V2 - Classification-based)
+try:
+    from timestamp_classifier import (
+        ClassificationStats,
+        TimestampClassification,
+        should_keep_timestamp,
+    )
+    from timestamp_classifier_v2 import classify_page_timestamps
+    from timestamp_patterns import find_timestamp_candidates, set_timestamp_range
+
+    CLASSIFIER_V2_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: V2 classifier not available ({e}), using fallback")
+    CLASSIFIER_V2_AVAILABLE = False
+    find_timestamp_candidates = None
+    classify_page_timestamps = None
+    set_timestamp_range = None
+    TimestampClassification = None
+    should_keep_timestamp = None
+    ClassificationStats = None
+
 # ---------------- Config ----------------
 
 EPOCH_MIN = 1262304000.0  # 2010-01-01
@@ -48,6 +77,7 @@ WIN_START = datetime(2015, 1, 1, tzinfo=UTC)
 WIN_END = datetime(2030, 1, 1, tzinfo=UTC)
 
 OUT_DIR = Path("Carved")
+BATCH_SIZE = 100  # Commit every N pages
 
 ANSI_RESET = "\x1b[0m"
 ANSI_GREEN = "\x1b[32m"
@@ -66,7 +96,8 @@ def read_sqlite_header_info(fp: Path) -> tuple[int, str, int]:
     Extracts DB header information.
     Returns page size (bytes), encoding type, and num of pages
     """
-    data = fp.read_bytes()[:100]
+    with fp.open("rb") as f:
+        data = f.read(100)
     if len(data) < 100 or data[:16] != b"SQLite format 3\0":
         raise ValueError("Not a valid SQLite header")
     page_size = int.from_bytes(data[16:18], "big") or 4096
@@ -181,12 +212,35 @@ def interpret_timestamp_best(value: float | int):
 
 
 def find_timestamps(page: bytes):
+    """
+    Find timestamps in page data.
+    Pre-filters by digit count to avoid processing obviously invalid values.
+    Valid ranges:
+    - 10 digits: unix_sec (e.g., 1609459200)
+    - 13 digits: unix_milli or cocoa_sec
+    - 16-17 digits: unix_micro, cocoa_nano, webkit_micro
+    - 19 digits: unix_nano
+    """
     out = []
     for m in _NUM_RE.finditer(page):
         try:
-            raw = float(m.group(0))
+            raw_str = m.group(0)
+            # Quick filter: skip if all zeros or obviously invalid
+            if raw_str.replace(b".", b"").replace(b"0", b"") == b"":
+                continue
+
+            raw = float(raw_str)
+            # Pre-filter by digit count (ignore decimal for now)
+            digit_count = len(str(int(abs(raw))))
+
+            # Only process numbers with plausible timestamp lengths
+            # 10=unix_sec, 13=unix_milli/cocoa_sec, 16-17=micro/webkit, 19=nano
+            if digit_count not in (10, 13, 16, 17, 19):
+                continue
+
         except Exception:
             continue
+
         kind, epoch, human = interpret_timestamp_best(raw)
         if epoch is not None:
             out.append((m.start(), epoch, kind, human))
@@ -287,8 +341,13 @@ def open_out_db(path: Path) -> sqlite3.Connection:
             value_text TEXT,
             value_num INTEGER,        -- For timestamps: original raw value (not normalized)
             ts_kind_guess TEXT,       -- unix_sec | unix_milli | unix_micro | unix_nano |
-                                      -- cocoa_sec | cocoa_nano | webkit_micro
-            ts_human TEXT             -- Human-readable GMT timestamp
+                                      -- cocoa_sec | cocoa_nano | webkit_micro | snowflake
+            ts_human TEXT,            -- Human-readable GMT timestamp
+            ts_classification TEXT,   -- confirmed_timestamp | confirmed_id | likely_timestamp |
+                                      -- likely_id | ambiguous | invalid
+            ts_reason TEXT,           -- Why this classification was chosen
+            ts_source_url TEXT,       -- Source URL if extracted from URL
+            ts_field_name TEXT        -- Field name if detected
         );
     """
     )
@@ -309,6 +368,18 @@ def open_out_db(path: Path) -> sqlite3.Connection:
         );
     """
     )
+    c.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_protobufs_page
+        ON carved_protobufs(page_no);
+    """
+    )
+    c.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_protobufs_offset
+        ON carved_protobufs(abs_offset);
+    """
+    )
     conn.commit()
     c.execute("PRAGMA journal_mode=DELETE;")
     c.execute("PRAGMA synchronous=NORMAL;")
@@ -321,6 +392,15 @@ def write_csv(path: Path, header: list[str], rows: list[tuple[Any, ...]]):
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(header)
+        w.writerows(rows)
+
+
+def append_csv_batch(path: Path, rows: list[tuple[Any, ...]]):
+    """Append rows to existing CSV file (no header)"""
+    if not rows:
+        return
+    with path.open("a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
         w.writerows(rows)
 
 
@@ -344,7 +424,45 @@ def main():
         action="store_true",
         help="Compact JSON output for protobufs",
     )
+    ap.add_argument(
+        "--ts-start",
+        type=str,
+        default="2015-01-01",
+        help="Start of timestamp validity range (YYYY-MM-DD, default: 2015-01-01)",
+    )
+    ap.add_argument(
+        "--ts-end",
+        type=str,
+        default="2030-01-01",
+        help="End of timestamp validity range (YYYY-MM-DD, default: 2030-01-01)",
+    )
+    ap.add_argument(
+        "--filter-mode",
+        type=str,
+        choices=["strict", "balanced", "permissive", "all"],
+        default="balanced",
+        help="Timestamp filtering mode: strict (only confirmed), balanced (confirmed+likely), "
+        "permissive (exclude only confirmed IDs), all (no filtering)",
+    )
+    ap.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Output directory for carved data (default: same directory as source database)",
+    )
     args = ap.parse_args()
+
+    # Parse timestamp range
+    global TARGET_START, TARGET_END
+    try:
+        TARGET_START = datetime.strptime(args.ts_start, "%Y-%m-%d").replace(tzinfo=UTC)
+        TARGET_END = datetime.strptime(args.ts_end, "%Y-%m-%d").replace(tzinfo=UTC)
+        # Update timestamp_patterns module if available
+        if set_timestamp_range:
+            set_timestamp_range(TARGET_START, TARGET_END)
+    except ValueError as e:
+        print(f"{ANSI_YELLOW}✗ Invalid timestamp range:{ANSI_RESET} {e}")
+        sys.exit(1)
 
     src = Path(args.db)
     if not src.is_file():
@@ -353,27 +471,32 @@ def main():
 
     page_size, encoding, page_count = read_sqlite_header_info(src)
 
+    # Determine output directory (default: same directory as source database)
+    output_base = Path(args.output_dir) if args.output_dir else src.parent
+
     # Timestamped outputs
     now_tag = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     base = src.stem
-    FILE_DIR = Path(f"{OUT_DIR}/{base}_{now_tag}")
-    PAGES_DIR = Path(f"{FILE_DIR}/pages")
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    FILE_DIR = output_base / "Carved" / f"{base}_{now_tag}"
     FILE_DIR.mkdir(parents=True, exist_ok=False)
-    PAGES_DIR.mkdir(parents=True, exist_ok=False)
 
     out_sqlite = FILE_DIR / f"{base}_Carved_Recovered.sqlite"
     out_csv_main = FILE_DIR / f"{base}_carved_all.csv"
     out_jsonl_pb = FILE_DIR / f"{base}_carved_protobufs.jsonl"
 
     print("╭──────────────────────────────╮")
-    print("│      SQLite Carver v3.2      │")
+    print("│      SQLite Carver v3.4      │")
     print("│      by WarpedWing Labs      │")
     print("╰──────────────────────────────╯\n")
     print(f"{ANSI_GREEN}[✓]{ANSI_RESET} File loaded: {src.name}")
     print(
         f"{ANSI_CYAN}[•]{ANSI_RESET} Page size: {page_size} bytes  |  Encoding: {encoding}"
     )
+    print(f"{ANSI_CYAN}[•]{ANSI_RESET} Timestamp filter mode: {args.filter_mode}")
+    if CLASSIFIER_V2_AVAILABLE:
+        print(f"{ANSI_GREEN}[✓]{ANSI_RESET} Using V2 classifier (Unfurl + time_decode)")
+    else:
+        print(f"{ANSI_YELLOW}[!]{ANSI_RESET} Using fallback classifier")
 
     db = open_out_db(out_sqlite)
     cur = db.cursor()
@@ -384,118 +507,14 @@ def main():
 
     print("\n─────────────────────────────────────────────")
     seen_ts_abs: set[int] = set()  # absolute offsets for TS
-    seen_url: set[tuple[int, str]] = set()
-    seen_txt: set[tuple[int, str]] = set()
+    seen_url_abs: set[int] = set()  # absolute offsets for URLs
+    seen_txt_abs: set[int] = set()  # absolute offsets for text
+    seen_pb_abs: set[int] = set()  # absolute offsets for protobufs
 
-    # For CSVs
-    rows_all: list[tuple[Any, ...]] = []
+    # For CSVs - batch buffer
+    rows_batch: list[tuple[Any, ...]] = []
 
-    with src.open("rb") as f:
-        for pno in range(total):
-            abs_page_start = pno * page_size
-            page = f.read(page_size)
-            if not page:
-                break
-
-            # Always dump the page as .bin
-            bin_path = PAGES_DIR / f"page_{pno:04d}.bin"
-            bin_path.write_bytes(page)
-
-            cluster_id = (pno // cluster_pages) if clustering_on else pno
-            print(
-                f"\r{percent_bar(pno+1,total)}  Parsing page {pno+1:04d}/{total:04d}",
-                end="",
-                flush=True,
-            )
-
-            # Timestamps
-            for off, epoch, kind, human in find_timestamps(page):
-                abs_off = abs_page_start + off
-                if abs_off in seen_ts_abs:
-                    continue
-                seen_ts_abs.add(abs_off)
-                cur.execute(
-                    "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
-                    "kind,value_text,value_num,ts_kind_guess,ts_human) "
-                    "VALUES (?,?,?,?, 'ts',NULL,?,?,?)",
-                    (pno, off, abs_off, cluster_id, epoch, kind, human),
-                )
-                rows_all.append(
-                    (pno, off, abs_off, cluster_id, "ts", "", epoch, kind, human)
-                )
-
-            # URLs
-            for off, url in find_urls(page):
-                if (pno, url) in seen_url:
-                    continue
-                seen_url.add((pno, url))
-                abs_off = abs_page_start + off
-                cur.execute(
-                    "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,kind,value_text,value_num,ts_kind_guess,ts_human) "  # noqa: E501
-                    "VALUES (?,?,?,?, 'url',?,NULL,NULL,NULL)",
-                    (pno, off, abs_off, cluster_id, url),
-                )
-                rows_all.append(
-                    (pno, off, abs_off, cluster_id, "url", url, None, None, None)
-                )
-
-            # Text
-            for off, txt in find_text_runs(page, min_len=8):
-                if (pno, txt) in seen_txt:
-                    continue
-                seen_txt.add((pno, txt))
-                abs_off = abs_page_start + off
-                cur.execute(
-                    "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,kind,value_text,value_num,ts_kind_guess,ts_human) "  # noqa: E501
-                    "VALUES (?,?,?,?, 'text',?,NULL,NULL,NULL)",
-                    (pno, off, abs_off, cluster_id, txt),
-                )
-                rows_all.append(
-                    (pno, off, abs_off, cluster_id, "text", txt, None, None, None)
-                )
-
-            # Protobufs → JSONL
-            if (
-                not args.no_protobuf
-                and maybe_decode_protobuf is not None
-                and to_json is not None
-            ):
-                taken = 0
-                for off, blob in find_blob_candidates(page, min_len=16):
-                    parsed = maybe_decode_protobuf(blob, max_depth=4)
-                    if not parsed:
-                        continue
-                    abs_off = abs_page_start + off
-                    jtxt = to_json(parsed, pretty=(not args.no_pretty_protobuf))
-                    cur.execute(
-                        "INSERT INTO carved_protobufs(parent_abs_offset,page_no,abs_offset,json_pretty) VALUES (?,?,?,?)",  # noqa: E501
-                        (abs_off, pno, abs_off, jtxt),
-                    )
-                    append_jsonl(
-                        out_jsonl_pb,
-                        {
-                            "parent_abs_offset": abs_off,
-                            "page_no": pno,
-                            "abs_offset": abs_off,
-                            "protobuf": (
-                                json.loads(jtxt)
-                                if not args.no_pretty_protobuf
-                                else parsed
-                            ),
-                        },
-                    )
-                    taken += 1
-                    if taken >= 4:
-                        break
-
-    # Finalize DB (single file, no WAL/SHM)
-    db.commit()
-    cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-    cur.execute("PRAGMA journal_mode=DELETE;")
-    db.commit()
-    db.close()
-
-    # Master CSV
+    # Initialize CSV with header
     write_csv(
         out_csv_main,
         [
@@ -508,16 +527,292 @@ def main():
             "value_num",
             "ts_kind_guess",
             "ts_human",
+            "ts_classification",
+            "ts_reason",
+            "ts_source_url",
+            "ts_field_name",
         ],
-        rows_all,
+        [],
     )
 
+    # Track classification stats
+    classification_stats = (
+        ClassificationStats()
+        if CLASSIFIER_V2_AVAILABLE and ClassificationStats
+        else None
+    )
+
+    with src.open("rb") as f:
+        for pno in range(total):
+            try:
+                abs_page_start = pno * page_size
+                page = f.read(page_size)
+                if not page:
+                    break
+
+                cluster_id = (pno // cluster_pages) if clustering_on else None
+                print(
+                    f"\r{percent_bar(pno+1,total)}  Parsing page {pno+1:04d}/{total:04d}",
+                    end="",
+                    flush=True,
+                )
+
+                # Timestamps with V2 classification
+                if (
+                    CLASSIFIER_V2_AVAILABLE
+                    and find_timestamp_candidates
+                    and classify_page_timestamps
+                ):
+                    # Get URL offsets from this page first
+                    page_url_offsets = find_urls(page)
+
+                    # Find raw timestamp candidates
+                    raw_candidates = find_timestamp_candidates(page)
+
+                    # Classify them using V2 system
+                    classified = classify_page_timestamps(
+                        page, raw_candidates, page_url_offsets
+                    )
+
+                    # Filter and insert based on mode
+                    for finding in classified:
+                        # Track stats
+                        if classification_stats:
+                            classification_stats.add(finding.classification)
+
+                        # Filter by mode
+                        keep = True
+                        if should_keep_timestamp:
+                            keep = should_keep_timestamp(
+                                finding.classification, args.filter_mode
+                            )
+                        if not keep:
+                            continue
+
+                        abs_off = abs_page_start + finding.offset
+                        if abs_off in seen_ts_abs:
+                            continue
+                        seen_ts_abs.add(abs_off)
+
+                        cur.execute(
+                            "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
+                            "kind,value_text,value_num,ts_kind_guess,ts_human,"
+                            "ts_classification,ts_reason,ts_source_url,ts_field_name) "
+                            "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,?,?)",
+                            (
+                                pno,
+                                finding.offset,
+                                abs_off,
+                                cluster_id,
+                                finding.value,
+                                finding.format_type,
+                                finding.human_readable,
+                                finding.classification.value,
+                                finding.reason,
+                                finding.source_url,
+                                finding.field_name,
+                            ),
+                        )
+                        rows_batch.append(
+                            (
+                                pno,
+                                finding.offset,
+                                abs_off,
+                                cluster_id,
+                                "ts",
+                                "",
+                                finding.value,
+                                finding.format_type,
+                                finding.human_readable,
+                                finding.classification.value,
+                                finding.reason,
+                                finding.source_url,
+                                finding.field_name,
+                            )
+                        )
+                else:
+                    # Fallback to old system if V2 not available
+                    for off, epoch, kind, human in find_timestamps(page):
+                        abs_off = abs_page_start + off
+                        if abs_off in seen_ts_abs:
+                            continue
+                        seen_ts_abs.add(abs_off)
+                        cur.execute(
+                            "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
+                            "kind,value_text,value_num,ts_kind_guess,ts_human,"
+                            "ts_classification,ts_reason,ts_source_url,ts_field_name) "
+                            "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,?,?)",
+                            (
+                                pno,
+                                off,
+                                abs_off,
+                                cluster_id,
+                                epoch,
+                                kind,
+                                human,
+                                "ambiguous",
+                                "fallback classifier",
+                                None,
+                                None,
+                            ),
+                        )
+                        rows_batch.append(
+                            (
+                                pno,
+                                off,
+                                abs_off,
+                                cluster_id,
+                                "ts",
+                                "",
+                                epoch,
+                                kind,
+                                human,
+                                "ambiguous",
+                                "fallback classifier",
+                                None,
+                                None,
+                            )
+                        )
+
+                # URLs
+                for off, url in find_urls(page):
+                    abs_off = abs_page_start + off
+                    if abs_off in seen_url_abs:
+                        continue
+                    seen_url_abs.add(abs_off)
+                    cur.execute(
+                        "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
+                        "kind,value_text,value_num,ts_kind_guess,ts_human,"
+                        "ts_classification,ts_reason,ts_source_url,ts_field_name) "
+                        "VALUES (?,?,?,?, 'url',?,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
+                        (pno, off, abs_off, cluster_id, url),
+                    )
+                    rows_batch.append(
+                        (
+                            pno,
+                            off,
+                            abs_off,
+                            cluster_id,
+                            "url",
+                            url,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    )
+
+                # Text
+                for off, txt in find_text_runs(page, min_len=8):
+                    abs_off = abs_page_start + off
+                    if abs_off in seen_txt_abs:
+                        continue
+                    seen_txt_abs.add(abs_off)
+                    cur.execute(
+                        "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
+                        "kind,value_text,value_num,ts_kind_guess,ts_human,"
+                        "ts_classification,ts_reason,ts_source_url,ts_field_name) "
+                        "VALUES (?,?,?,?, 'text',?,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
+                        (pno, off, abs_off, cluster_id, txt),
+                    )
+                    rows_batch.append(
+                        (
+                            pno,
+                            off,
+                            abs_off,
+                            cluster_id,
+                            "text",
+                            txt,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    )
+
+                # Protobufs → JSONL
+                if (
+                    not args.no_protobuf
+                    and maybe_decode_protobuf is not None
+                    and to_json is not None
+                ):
+                    for off, blob in find_blob_candidates(page, min_len=16):
+                        abs_off = abs_page_start + off
+                        # Deduplicate by absolute offset
+                        if abs_off in seen_pb_abs:
+                            continue
+
+                        parsed = maybe_decode_protobuf(blob, max_depth=4)
+                        if not parsed:
+                            continue
+
+                        seen_pb_abs.add(abs_off)
+                        jtxt = to_json(parsed, pretty=(not args.no_pretty_protobuf))
+                        cur.execute(
+                            "INSERT INTO carved_protobufs(parent_abs_offset,page_no,abs_offset,json_pretty) VALUES (?,?,?,?)",  # noqa: E501
+                            (abs_off, pno, abs_off, jtxt),
+                        )
+                        append_jsonl(
+                            out_jsonl_pb,
+                            {
+                                "parent_abs_offset": abs_off,
+                                "page_no": pno,
+                                "abs_offset": abs_off,
+                                "protobuf": (
+                                    json.loads(jtxt)
+                                    if not args.no_pretty_protobuf
+                                    else parsed
+                                ),
+                            },
+                        )
+
+                # Batch commit every BATCH_SIZE pages
+                if (pno + 1) % BATCH_SIZE == 0:
+                    db.commit()
+                    append_csv_batch(out_csv_main, rows_batch)
+                    rows_batch.clear()
+
+            except Exception as e:
+                print(
+                    f"\n{ANSI_YELLOW}[!] Error processing page {pno}: {e}{ANSI_RESET}",
+                    file=sys.stderr,
+                )
+                # Commit what we have so far to avoid losing all progress
+                db.commit()
+                append_csv_batch(out_csv_main, rows_batch)
+                rows_batch.clear()
+                # Continue with next page
+                continue
+
+    # Final commit for remaining rows
+    if rows_batch:
+        append_csv_batch(out_csv_main, rows_batch)
+        rows_batch.clear()
+
+    # Finalize DB (single file, no WAL/SHM)
+    db.commit()
+    cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    cur.execute("PRAGMA journal_mode=DELETE;")
+    db.commit()
+    db.close()
+
     print("\n─────────────────────────────────────────────\n")
+
+    # Print classification summary
+    if classification_stats:
+        print(classification_stats.get_summary())
+        print()
+
     print(f"{ANSI_GREEN}[✓]{ANSI_RESET} Exported:")
     print(f"   • {out_sqlite}")
     print(f"   • {out_csv_main}")
     print(f"   • {out_jsonl_pb}")
-    print(f"   • {PAGES_DIR}/page_*.bin")
     print(f"\n{ANSI_GREEN}[✓]{ANSI_RESET} Done.")
 
 
