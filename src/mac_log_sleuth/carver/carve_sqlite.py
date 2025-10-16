@@ -48,6 +48,19 @@ except Exception:
     maybe_decode_protobuf = None
     to_json = None
 
+# Local protobuf timestamp extractor
+try:
+    from protobuf_timestamp_extractor import (
+        analyze_protobuf_for_timestamps,
+        should_keep_protobuf,
+    )
+
+    PROTOBUF_FILTER_AVAILABLE = True
+except Exception:
+    analyze_protobuf_for_timestamps = None
+    should_keep_protobuf = None
+    PROTOBUF_FILTER_AVAILABLE = False
+
 # Local timestamp validation (V2 - Classification-based)
 try:
     from timestamp_classifier import (
@@ -339,9 +352,9 @@ def open_out_db(path: Path) -> sqlite3.Connection:
             cluster_id INTEGER,
             kind TEXT,                -- 'ts' | 'url' | 'text' | 'blob'
             value_text TEXT,
-            value_num INTEGER,        -- For timestamps: original raw value (not normalized)
+            value_num TEXT,           -- For timestamps: original raw value (hex, decimal, etc.)
             ts_kind_guess TEXT,       -- unix_sec | unix_milli | unix_micro | unix_nano |
-                                      -- cocoa_sec | cocoa_nano | webkit_micro | snowflake
+                                      -- cocoa_sec | cocoa_nano | webkit_micro | snowflake | unix_sec_hex
             ts_human TEXT,            -- Human-readable GMT timestamp
             ts_classification TEXT,   -- confirmed_timestamp | confirmed_id | likely_timestamp |
                                       -- likely_id | ambiguous | invalid
@@ -364,7 +377,10 @@ def open_out_db(path: Path) -> sqlite3.Connection:
             parent_abs_offset INTEGER,
             page_no INTEGER,
             abs_offset INTEGER,
-            json_pretty TEXT
+            json_pretty TEXT,
+            has_timestamps INTEGER,     -- Boolean: 1 if timestamps found, 0 otherwise
+            timestamp_count INTEGER,    -- Number of timestamps found
+            timestamp_fields TEXT       -- JSON array of timestamp field names and values
         );
     """
     )
@@ -440,9 +456,9 @@ def main():
         "--filter-mode",
         type=str,
         choices=["strict", "balanced", "permissive", "all"],
-        default="balanced",
+        default="permissive",
         help="Timestamp filtering mode: strict (only confirmed), balanced (confirmed+likely), "
-        "permissive (exclude only confirmed IDs), all (no filtering)",
+        "permissive (exclude only confirmed IDs - DEFAULT), all (no filtering)",
     )
     ap.add_argument(
         "--output-dir",
@@ -488,13 +504,13 @@ def main():
     print("│      SQLite Carver v3.4      │")
     print("│      by WarpedWing Labs      │")
     print("╰──────────────────────────────╯\n")
-    print(f"{ANSI_GREEN}[✓]{ANSI_RESET} File loaded: {src.name}")
+    print(f"{ANSI_GREEN}[+]{ANSI_RESET} File loaded: {src.name}")
     print(
         f"{ANSI_CYAN}[•]{ANSI_RESET} Page size: {page_size} bytes  |  Encoding: {encoding}"
     )
     print(f"{ANSI_CYAN}[•]{ANSI_RESET} Timestamp filter mode: {args.filter_mode}")
     if CLASSIFIER_V2_AVAILABLE:
-        print(f"{ANSI_GREEN}[✓]{ANSI_RESET} Using V2 classifier (Unfurl + time_decode)")
+        print(f"{ANSI_GREEN}[+]{ANSI_RESET} Using V2 classifier (Unfurl + time_decode)")
     else:
         print(f"{ANSI_YELLOW}[!]{ANSI_RESET} Using fallback classifier")
 
@@ -557,7 +573,7 @@ def main():
                     flush=True,
                 )
 
-                # Timestamps with V2 classification
+                # Timestamps with V2 classification (decimal timestamps)
                 if (
                     CLASSIFIER_V2_AVAILABLE
                     and find_timestamp_candidates
@@ -566,7 +582,7 @@ def main():
                     # Get URL offsets from this page first
                     page_url_offsets = find_urls(page)
 
-                    # Find raw timestamp candidates
+                    # Find raw timestamp candidates (decimal only)
                     raw_candidates = find_timestamp_candidates(page)
 
                     # Classify them using V2 system
@@ -604,7 +620,7 @@ def main():
                                 finding.offset,
                                 abs_off,
                                 cluster_id,
-                                finding.value,
+                                str(finding.value),  # Store as text to preserve format
                                 finding.format_type,
                                 finding.human_readable,
                                 finding.classification.value,
@@ -621,7 +637,7 @@ def main():
                                 cluster_id,
                                 "ts",
                                 "",
-                                finding.value,
+                                str(finding.value),  # Store as text
                                 finding.format_type,
                                 finding.human_readable,
                                 finding.classification.value,
@@ -630,6 +646,56 @@ def main():
                                 finding.field_name,
                             )
                         )
+
+                    # Also find hex timestamps (processed separately)
+                    try:
+                        from timestamp_patterns import find_hex_timestamp_candidates
+
+                        hex_timestamps = find_hex_timestamp_candidates(page)
+                        for offset, hex_val, kind, human in hex_timestamps:
+                            abs_off = abs_page_start + offset
+                            if abs_off in seen_ts_abs:
+                                continue
+                            seen_ts_abs.add(abs_off)
+
+                            # Hex timestamps stored in value_num (now TEXT)
+                            cur.execute(
+                                "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
+                                "kind,value_text,value_num,ts_kind_guess,ts_human,"
+                                "ts_classification,ts_reason,ts_source_url,ts_field_name) "
+                                "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,NULL,NULL)",
+                                (
+                                    pno,
+                                    offset,
+                                    abs_off,
+                                    cluster_id,
+                                    hex_val,  # Store hex string like "5b994548" in value_num
+                                    kind,  # e.g., "unix_sec_hex"
+                                    human,
+                                    "confirmed_timestamp",  # Hex timestamps in Message-IDs are likely valid
+                                    "Hexadecimal timestamp format",
+                                ),
+                            )
+                            rows_batch.append(
+                                (
+                                    pno,
+                                    offset,
+                                    abs_off,
+                                    cluster_id,
+                                    "ts",
+                                    "",  # value_text empty
+                                    hex_val,  # Hex string in value_num (now TEXT field)
+                                    kind,
+                                    human,
+                                    "confirmed_timestamp",
+                                    "Hexadecimal timestamp format",
+                                    None,
+                                    None,
+                                )
+                            )
+                    except Exception:
+                        pass  # Hex timestamp support not available
+
                 else:
                     # Fallback to old system if V2 not available
                     for off, epoch, kind, human in find_timestamps(page):
@@ -752,25 +818,58 @@ def main():
                         if not parsed:
                             continue
 
+                        # Filter out garbage protobufs (optional, only if module available)
+                        if PROTOBUF_FILTER_AVAILABLE:
+                            keep, reason = should_keep_protobuf(parsed)
+                            if not keep:
+                                continue  # Skip this protobuf - it's noise
+
+                            # Analyze for timestamps (add to output for context)
+                            analysis = analyze_protobuf_for_timestamps(parsed)
+                        else:
+                            analysis = None
+
                         seen_pb_abs.add(abs_off)
                         jtxt = to_json(parsed, pretty=(not args.no_pretty_protobuf))
+
+                        # Prepare timestamp analysis for database
+                        if analysis and analysis.get("has_timestamps"):
+                            has_ts = 1
+                            ts_count = analysis["timestamp_count"]
+                            ts_fields = json.dumps(analysis["timestamps"])
+                        else:
+                            has_ts = 0
+                            ts_count = 0
+                            ts_fields = None
+
+                        # Insert into database with timestamp info
                         cur.execute(
-                            "INSERT INTO carved_protobufs(parent_abs_offset,page_no,abs_offset,json_pretty) VALUES (?,?,?,?)",  # noqa: E501
-                            (abs_off, pno, abs_off, jtxt),
+                            "INSERT INTO carved_protobufs(parent_abs_offset,page_no,abs_offset,"
+                            "json_pretty,has_timestamps,timestamp_count,timestamp_fields) "
+                            "VALUES (?,?,?,?,?,?,?)",
+                            (abs_off, pno, abs_off, jtxt, has_ts, ts_count, ts_fields),
                         )
-                        append_jsonl(
-                            out_jsonl_pb,
-                            {
-                                "parent_abs_offset": abs_off,
-                                "page_no": pno,
-                                "abs_offset": abs_off,
-                                "protobuf": (
-                                    json.loads(jtxt)
-                                    if not args.no_pretty_protobuf
-                                    else parsed
-                                ),
-                            },
-                        )
+
+                        # Build JSONL output with optional timestamp analysis
+                        jsonl_entry = {
+                            "parent_abs_offset": abs_off,
+                            "page_no": pno,
+                            "abs_offset": abs_off,
+                            "protobuf": (
+                                json.loads(jtxt)
+                                if not args.no_pretty_protobuf
+                                else parsed
+                            ),
+                        }
+
+                        # Add timestamp analysis to JSONL if available
+                        if has_ts:
+                            jsonl_entry["timestamp_analysis"] = {
+                                "timestamp_count": ts_count,
+                                "timestamps": json.loads(ts_fields),
+                            }
+
+                        append_jsonl(out_jsonl_pb, jsonl_entry)
 
                 # Batch commit every BATCH_SIZE pages
                 if (pno + 1) % BATCH_SIZE == 0:

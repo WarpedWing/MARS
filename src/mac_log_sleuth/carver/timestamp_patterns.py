@@ -14,14 +14,36 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
+from urllib.parse import unquote_to_bytes
 
 # Timestamp format detection regex
 # Matches numbers with 9+ digits (potential timestamps)
 TIMESTAMP_REGEX = re.compile(rb"[0-9]{9,}\.?[0-9]*")
 
+# Hexadecimal timestamp regex (e.g., 5b994548.5ad909e0)
+# Matches 8 hex chars, optional dot, 8 hex chars
+HEX_TIMESTAMP_REGEX = re.compile(rb"[0-9a-fA-F]{8}\.?[0-9a-fA-F]{8}")
+
 # Global timestamp validity window (will be overridden by CLI args)
 TARGET_START = datetime(2015, 1, 1, tzinfo=UTC)
 TARGET_END = datetime(2030, 1, 1, tzinfo=UTC)
+
+
+def url_decode_bytes(data: bytes) -> bytes:
+    """
+    URL-decode bytes in place, handling common percent-encoded characters.
+
+    This ensures we find timestamps in URL-encoded strings like:
+    message:%3CetPan.5b994548.5ad909e0.fe@example.org%3E
+
+    Returns decoded bytes, falls back to original if decoding fails.
+    """
+    try:
+        # unquote_to_bytes handles %XX encoding
+        return unquote_to_bytes(data)
+    except Exception:
+        # If decoding fails, return original
+        return data
 
 
 def set_timestamp_range(start: datetime, end: datetime):
@@ -106,6 +128,94 @@ def interpret_timestamp_best(value: float | int) -> tuple[str | None, int | None
     return kind, val, dt.strftime("%Y-%m-%d %H:%M:%S GMT")
 
 
+def interpret_hex_timestamp(hex_str: bytes) -> list[tuple[str, str, str]]:
+    """
+    Interpret hexadecimal timestamp format (e.g., 5b994548 or 5b994548.5ad909e0).
+
+    These are typically Unix timestamps encoded as hex.
+    If there's a dot, we extract BOTH timestamps separately.
+
+    Returns:
+        List of (kind:str, hex_value:str, human_readable:str) tuples
+        Note: Returns hex_value as string (e.g., "5b994548"), not decimal
+    """
+    results = []
+
+    try:
+        # Split on dot if present
+        parts = hex_str.split(b".")
+
+        for part in parts:
+            # Skip if not 8 hex digits
+            if len(part) != 8:
+                continue
+
+            # Parse hex value to decimal for validation
+            hex_val = int(part, 16)
+
+            # Try to interpret as unix timestamp
+            kind, epoch, human = interpret_timestamp_best(hex_val)
+
+            if kind is not None:
+                # Return with special kind indicating hex format
+                # Store the original hex string, not the decimal value
+                results.append((f"{kind}_hex", part.decode("ascii"), human))
+
+    except Exception:
+        pass
+
+    return results
+
+
+def find_hex_timestamp_candidates(page: bytes) -> list[tuple[int, str, str, str]]:
+    """
+    Find hexadecimal timestamps in page (e.g., 5b994548 or 5b994548.5ad909e0).
+
+    When pattern like "5b994548.5ad909e0" is found, extracts BOTH timestamps.
+    Searches both original page AND URL-decoded version to catch encoded timestamps.
+
+    Returns:
+        List of (offset, hex_value, kind, human_readable) tuples
+        where hex_value is the original hex string (e.g., "5b994548")
+    """
+    candidates = []
+    seen_offsets = set()
+
+    # Search both original and decoded versions
+    pages_to_search = [
+        (page, 0),  # Original page with no offset adjustment
+        (url_decode_bytes(page), 0),  # Decoded page
+    ]
+
+    for search_page, offset_adjust in pages_to_search:
+        for m in HEX_TIMESTAMP_REGEX.finditer(search_page):
+            try:
+                hex_str = m.group(0)
+
+                # Quick filter: skip if all zeros
+                if hex_str.replace(b".", b"").replace(b"0", b"") == b"":
+                    continue
+
+                # Parse and validate (may return multiple timestamps if dot-separated)
+                results = interpret_hex_timestamp(hex_str)
+
+                for kind, hex_val, human in results:
+                    # Calculate offset for this specific hex value within the match
+                    offset = m.start() + hex_str.find(hex_val.encode()) + offset_adjust
+
+                    # Deduplicate by offset
+                    if offset in seen_offsets:
+                        continue
+                    seen_offsets.add(offset)
+
+                    candidates.append((offset, hex_val, kind, human))
+
+            except Exception:
+                continue
+
+    return candidates
+
+
 def find_timestamp_candidates(page: bytes) -> list[tuple[int, float]]:
     """
     Find all numbers in page that could potentially be timestamps.
@@ -117,33 +227,54 @@ def find_timestamp_candidates(page: bytes) -> list[tuple[int, float]]:
     - 16-17 digits: unix_micro, cocoa_nano, webkit_micro
     - 19 digits: unix_nano
 
+    Searches both original page AND URL-decoded version to catch encoded timestamps.
+
+    NOTE: This function does NOT include hex timestamps.
+    Use find_hex_timestamp_candidates() separately for those.
+
     Returns:
         List of (offset, numeric_value) tuples
     """
     candidates = []
+    seen_offsets = set()
 
-    for m in TIMESTAMP_REGEX.finditer(page):
-        try:
-            raw_str = m.group(0)
+    # Search both original and decoded versions
+    pages_to_search = [
+        (page, 0),  # Original page
+        (url_decode_bytes(page), 0),  # Decoded page
+    ]
 
-            # Quick filter: skip if all zeros or obviously invalid
-            if raw_str.replace(b".", b"").replace(b"0", b"") == b"":
+    for search_page, offset_adjust in pages_to_search:
+        # Find decimal timestamps
+        for m in TIMESTAMP_REGEX.finditer(search_page):
+            try:
+                raw_str = m.group(0)
+
+                # Quick filter: skip if all zeros or obviously invalid
+                if raw_str.replace(b".", b"").replace(b"0", b"") == b"":
+                    continue
+
+                raw = float(raw_str)
+
+                # Pre-filter by digit count (ignore decimal for now)
+                digit_count = len(str(int(abs(raw))))
+
+                # Only process numbers with plausible timestamp lengths
+                # 10=unix_sec, 13=unix_milli/cocoa_sec, 16-17=micro/webkit, 19=nano
+                if digit_count not in (10, 13, 16, 17, 19):
+                    continue
+
+                offset = m.start() + offset_adjust
+
+                # Deduplicate by offset
+                if offset in seen_offsets:
+                    continue
+                seen_offsets.add(offset)
+
+                candidates.append((offset, raw))
+
+            except Exception:
                 continue
-
-            raw = float(raw_str)
-
-            # Pre-filter by digit count (ignore decimal for now)
-            digit_count = len(str(int(abs(raw))))
-
-            # Only process numbers with plausible timestamp lengths
-            # 10=unix_sec, 13=unix_milli/cocoa_sec, 16-17=micro/webkit, 19=nano
-            if digit_count not in (10, 13, 16, 17, 19):
-                continue
-
-            candidates.append((m.start(), raw))
-
-        except Exception:
-            continue
 
     return candidates
 

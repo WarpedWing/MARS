@@ -39,12 +39,12 @@ except ImportError:
 
 # Field name patterns
 TIMESTAMP_FIELD_KEYWORDS = [
-    b"time",
+    b"time",  # Catches: time, endTime, startTime, etc.
     b"date",
     b"created",
     b"modified",
     b"updated",
-    b"expire",
+    b"expire",  # Catches: expire, expiry, expires, expiration
     b"last",
     b"timestamp",
     b"started",
@@ -56,6 +56,12 @@ TIMESTAMP_FIELD_KEYWORDS = [
     b"mtime",
     b"ctime",
     b"atime",
+    b"begin",
+    b"ttl",  # Time to live
+    b"valid",  # validFrom, validTo, validUntil
+    b"duration",
+    b"delay",
+    b"timeout",
 ]
 
 ID_FIELD_KEYWORDS = [
