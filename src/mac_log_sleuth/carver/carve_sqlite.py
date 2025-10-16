@@ -98,7 +98,10 @@ ANSI_CYAN = "\x1b[36m"
 ANSI_YELLOW = "\x1b[33m"
 
 URL_RE = re.compile(rb"https?://[^\s\0]+", re.IGNORECASE)
-_NUM_RE = re.compile(rb"[0-9]{9,}\.?[0-9]*")  # biggish numbers only
+# Match complete numbers only - use word boundaries to avoid matching within larger numbers
+_NUM_RE = re.compile(
+    rb"(?<![0-9])[0-9]{9,}(?:\.[0-9]+)?(?![0-9])"
+)  # biggish numbers only
 
 
 # ---------------- Helpers ----------------
@@ -271,22 +274,50 @@ def find_urls(page: bytes) -> list[tuple[int, str]]:
     return out
 
 
-def find_text_runs(page: bytes, min_len: int = 6) -> list[tuple[int, str]]:
-    out = []
-    parts = []
+def find_text_runs(page: bytes, min_len: int = 6) -> list[tuple[int, int, str]]:
+    """Locate printable text runs and return (start_offset, end_offset, text)."""
+
+    out: list[tuple[int, int, str]] = []
+    segments: list[tuple[int, bytes]] = []
     start = 0
     for i, b in enumerate(page):
         if b < 32 and b not in (9, 10, 13):
             if i > start:
-                parts.append((start, page[start:i]))
+                segments.append((start, page[start:i]))
             start = i + 1
     if start < len(page):
-        parts.append((start, page[start:]))
+        segments.append((start, page[start:]))
 
-    for off, chunk in parts:
-        s = chunk.decode("utf-8", errors="replace").strip()
-        if len(s) >= min_len and any(c.isalpha() for c in s):
-            out.append((off, s))
+    whitespace = b" \t\r\n"
+
+    for off, chunk in segments:
+        if not chunk:
+            continue
+
+        lead = 0
+        while lead < len(chunk) and chunk[lead] in whitespace:
+            lead += 1
+
+        trail = 0
+        while trail < len(chunk) - lead and chunk[-(trail + 1)] in whitespace:
+            trail += 1
+
+        if lead + trail >= len(chunk):
+            continue
+
+        core = chunk[lead : len(chunk) - trail]
+        try:
+            text = core.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+
+        if len(text) < min_len or not any(c.isalpha() for c in text):
+            continue
+
+        start_off = off + lead
+        end_off = start_off + len(core)
+        out.append((start_off, end_off, text))
+
     return out
 
 
@@ -360,7 +391,8 @@ def open_out_db(path: Path) -> sqlite3.Connection:
                                       -- likely_id | ambiguous | invalid
             ts_reason TEXT,           -- Why this classification was chosen
             ts_source_url TEXT,       -- Source URL if extracted from URL
-            ts_field_name TEXT        -- Field name if detected
+            ts_field_name TEXT,       -- Field name if detected
+            ts_source_text_abs_offset INTEGER  -- Absolute offset of surrounding text context
         );
     """
     )
@@ -403,7 +435,7 @@ def open_out_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def write_csv(path: Path, header: list[str], rows: list[tuple[Any, ...]]):
+def write_csv(path: Path, header: list[str], rows: list[list[Any]]):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -411,7 +443,7 @@ def write_csv(path: Path, header: list[str], rows: list[tuple[Any, ...]]):
         w.writerows(rows)
 
 
-def append_csv_batch(path: Path, rows: list[tuple[Any, ...]]):
+def append_csv_batch(path: Path, rows: list[list[Any]]):
     """Append rows to existing CSV file (no header)"""
     if not rows:
         return
@@ -528,7 +560,7 @@ def main():
     seen_pb_abs: set[int] = set()  # absolute offsets for protobufs
 
     # For CSVs - batch buffer
-    rows_batch: list[tuple[Any, ...]] = []
+    rows_batch: list[list[Any]] = []
 
     # Initialize CSV with header
     write_csv(
@@ -547,6 +579,7 @@ def main():
             "ts_reason",
             "ts_source_url",
             "ts_field_name",
+            "ts_source_text_abs_offset",
         ],
         [],
     )
@@ -572,6 +605,8 @@ def main():
                     end="",
                     flush=True,
                 )
+
+                pending_ts_for_text: list[dict[str, Any]] = []
 
                 # Timestamps with V2 classification (decimal timestamps)
                 if (
@@ -613,8 +648,8 @@ def main():
                         cur.execute(
                             "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
                             "kind,value_text,value_num,ts_kind_guess,ts_human,"
-                            "ts_classification,ts_reason,ts_source_url,ts_field_name) "
-                            "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,?,?)",
+                            "ts_classification,ts_reason,ts_source_url,ts_field_name,ts_source_text_abs_offset) "
+                            "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,?,?,?)",
                             (
                                 pno,
                                 finding.offset,
@@ -627,10 +662,23 @@ def main():
                                 finding.reason,
                                 finding.source_url,
                                 finding.field_name,
+                                None,
                             ),
                         )
+                        row_id = None
+                        if cur.rowcount:
+                            row_id = cur.lastrowid
+                        else:
+                            existing = cur.execute(
+                                "SELECT id FROM carved_all WHERE page_no=? AND page_offset=? AND abs_offset=? AND kind='ts'",
+                                (pno, finding.offset, abs_off),
+                            ).fetchone()
+                            if existing:
+                                row_id = existing[0]
+
+                        batch_index = len(rows_batch)
                         rows_batch.append(
-                            (
+                            [
                                 pno,
                                 finding.offset,
                                 abs_off,
@@ -644,7 +692,19 @@ def main():
                                 finding.reason,
                                 finding.source_url,
                                 finding.field_name,
-                            )
+                                None,
+                            ]
+                        )
+
+                        pending_ts_for_text.append(
+                            {
+                                "page_no": pno,
+                                "page_offset": finding.offset,
+                                "abs_offset": abs_off,
+                                "row_id": row_id,
+                                "batch_index": batch_index,
+                                "linked": False,
+                            }
                         )
 
                     # Also find hex timestamps (processed separately)
@@ -652,7 +712,11 @@ def main():
                         from timestamp_patterns import find_hex_timestamp_candidates
 
                         hex_timestamps = find_hex_timestamp_candidates(page)
+                        seen_hex_values: set[str] = set()
                         for offset, hex_val, kind, human in hex_timestamps:
+                            if hex_val in seen_hex_values:
+                                continue
+                            seen_hex_values.add(hex_val)
                             abs_off = abs_page_start + offset
                             if abs_off in seen_ts_abs:
                                 continue
@@ -662,8 +726,8 @@ def main():
                             cur.execute(
                                 "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
                                 "kind,value_text,value_num,ts_kind_guess,ts_human,"
-                                "ts_classification,ts_reason,ts_source_url,ts_field_name) "
-                                "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,NULL,NULL)",
+                                "ts_classification,ts_reason,ts_source_url,ts_field_name,ts_source_text_abs_offset) "
+                                "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,NULL,NULL,?)",
                                 (
                                     pno,
                                     offset,
@@ -674,10 +738,23 @@ def main():
                                     human,
                                     "confirmed_timestamp",  # Hex timestamps in Message-IDs are likely valid
                                     "Hexadecimal timestamp format",
+                                    None,
                                 ),
                             )
+                            row_id = None
+                            if cur.rowcount:
+                                row_id = cur.lastrowid
+                            else:
+                                existing = cur.execute(
+                                    "SELECT id FROM carved_all WHERE page_no=? AND page_offset=? AND abs_offset=? AND kind='ts'",
+                                    (pno, offset, abs_off),
+                                ).fetchone()
+                                if existing:
+                                    row_id = existing[0]
+
+                            batch_index = len(rows_batch)
                             rows_batch.append(
-                                (
+                                [
                                     pno,
                                     offset,
                                     abs_off,
@@ -691,7 +768,18 @@ def main():
                                     "Hexadecimal timestamp format",
                                     None,
                                     None,
-                                )
+                                    None,
+                                ]
+                            )
+                            pending_ts_for_text.append(
+                                {
+                                    "page_no": pno,
+                                    "page_offset": offset,
+                                    "abs_offset": abs_off,
+                                    "row_id": row_id,
+                                    "batch_index": batch_index,
+                                    "linked": False,
+                                }
                             )
                     except Exception:
                         pass  # Hex timestamp support not available
@@ -706,8 +794,8 @@ def main():
                         cur.execute(
                             "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
                             "kind,value_text,value_num,ts_kind_guess,ts_human,"
-                            "ts_classification,ts_reason,ts_source_url,ts_field_name) "
-                            "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,?,?)",
+                            "ts_classification,ts_reason,ts_source_url,ts_field_name,ts_source_text_abs_offset) "
+                            "VALUES (?,?,?,?, 'ts',NULL,?,?,?,?,?,?,?,?)",
                             (
                                 pno,
                                 off,
@@ -720,10 +808,23 @@ def main():
                                 "fallback classifier",
                                 None,
                                 None,
+                                None,
                             ),
                         )
+                        row_id = None
+                        if cur.rowcount:
+                            row_id = cur.lastrowid
+                        else:
+                            existing = cur.execute(
+                                "SELECT id FROM carved_all WHERE page_no=? AND page_offset=? AND abs_offset=? AND kind='ts'",
+                                (pno, off, abs_off),
+                            ).fetchone()
+                            if existing:
+                                row_id = existing[0]
+
+                        batch_index = len(rows_batch)
                         rows_batch.append(
-                            (
+                            [
                                 pno,
                                 off,
                                 abs_off,
@@ -737,7 +838,18 @@ def main():
                                 "fallback classifier",
                                 None,
                                 None,
-                            )
+                                None,
+                            ]
+                        )
+                        pending_ts_for_text.append(
+                            {
+                                "page_no": pno,
+                                "page_offset": off,
+                                "abs_offset": abs_off,
+                                "row_id": row_id,
+                                "batch_index": batch_index,
+                                "linked": False,
+                            }
                         )
 
                 # URLs
@@ -749,12 +861,12 @@ def main():
                     cur.execute(
                         "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
                         "kind,value_text,value_num,ts_kind_guess,ts_human,"
-                        "ts_classification,ts_reason,ts_source_url,ts_field_name) "
-                        "VALUES (?,?,?,?, 'url',?,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
+                        "ts_classification,ts_reason,ts_source_url,ts_field_name,ts_source_text_abs_offset) "
+                        "VALUES (?,?,?,?, 'url',?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
                         (pno, off, abs_off, cluster_id, url),
                     )
                     rows_batch.append(
-                        (
+                        [
                             pno,
                             off,
                             abs_off,
@@ -768,26 +880,38 @@ def main():
                             None,
                             None,
                             None,
-                        )
+                            None,
+                        ]
                     )
 
                 # Text
-                for off, txt in find_text_runs(page, min_len=8):
-                    abs_off = abs_page_start + off
+                for off_start, off_end, txt in find_text_runs(page, min_len=8):
+                    abs_off = abs_page_start + off_start
                     if abs_off in seen_txt_abs:
                         continue
                     seen_txt_abs.add(abs_off)
                     cur.execute(
                         "INSERT OR IGNORE INTO carved_all(page_no,page_offset,abs_offset,cluster_id,"
                         "kind,value_text,value_num,ts_kind_guess,ts_human,"
-                        "ts_classification,ts_reason,ts_source_url,ts_field_name) "
-                        "VALUES (?,?,?,?, 'text',?,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
-                        (pno, off, abs_off, cluster_id, txt),
+                        "ts_classification,ts_reason,ts_source_url,ts_field_name,ts_source_text_abs_offset) "
+                        "VALUES (?,?,?,?, 'text',?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
+                        (pno, off_start, abs_off, cluster_id, txt),
                     )
+                    row_id = None
+                    if cur.rowcount:
+                        row_id = cur.lastrowid
+                    else:
+                        existing = cur.execute(
+                            "SELECT id FROM carved_all WHERE page_no=? AND page_offset=? AND abs_offset=? AND kind='text'",
+                            (pno, off_start, abs_off),
+                        ).fetchone()
+                        if existing:
+                            row_id = existing[0]
+
                     rows_batch.append(
-                        (
+                        [
                             pno,
-                            off,
+                            off_start,
                             abs_off,
                             cluster_id,
                             "text",
@@ -799,8 +923,37 @@ def main():
                             None,
                             None,
                             None,
-                        )
+                            None,
+                        ]
                     )
+
+                    text_abs_end = abs_page_start + off_end
+                    for entry in pending_ts_for_text:
+                        if entry["linked"]:
+                            continue
+                        ts_abs = entry["abs_offset"]
+                        if abs_off <= ts_abs < text_abs_end:
+                            if entry["row_id"] is None:
+                                existing_ts = cur.execute(
+                                    "SELECT id FROM carved_all WHERE page_no=? AND page_offset=? AND abs_offset=? AND kind='ts'",
+                                    (pno, entry["page_offset"], entry["abs_offset"]),
+                                ).fetchone()
+                                if existing_ts:
+                                    entry["row_id"] = existing_ts[0]
+
+                            if entry["row_id"] is not None:
+                                cur.execute(
+                                    "UPDATE carved_all SET ts_source_text_abs_offset=? WHERE id=?",
+                                    (abs_off, entry["row_id"]),
+                                )
+
+                            batch_idx = entry.get("batch_index")
+                            if batch_idx is not None and 0 <= batch_idx < len(
+                                rows_batch
+                            ):
+                                rows_batch[batch_idx][-1] = abs_off
+
+                            entry["linked"] = True
 
                 # Protobufs → JSONL
                 if (
@@ -836,11 +989,16 @@ def main():
                         if analysis and analysis.get("has_timestamps"):
                             has_ts = 1
                             ts_count = analysis["timestamp_count"]
-                            ts_fields = json.dumps(analysis["timestamps"])
+                            ts_entries = analysis.get("timestamps", [])
+                            if args.no_pretty_protobuf:
+                                ts_fields = json.dumps(ts_entries)
+                            else:
+                                ts_fields = json.dumps(ts_entries, indent=2)
                         else:
                             has_ts = 0
                             ts_count = 0
                             ts_fields = None
+                            ts_entries = []
 
                         # Insert into database with timestamp info
                         cur.execute(
@@ -866,7 +1024,7 @@ def main():
                         if has_ts:
                             jsonl_entry["timestamp_analysis"] = {
                                 "timestamp_count": ts_count,
-                                "timestamps": json.loads(ts_fields),
+                                "timestamps": ts_entries,
                             }
 
                         append_jsonl(out_jsonl_pb, jsonl_entry)

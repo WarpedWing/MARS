@@ -52,7 +52,11 @@ def looks_like_timestamp(value: int | float, field_name: str | None = None) -> t
     return False, None
 
 
-def extract_timestamps_from_protobuf(pb_data: dict, parent_key: str = "") -> list[tuple[str, int | float, str]]:
+def extract_timestamps_from_protobuf(
+    pb_data: dict,
+    parent_key: str = "",
+    seen: set[tuple[str, int | float]] | None = None,
+) -> list[tuple[str, int | float, str]]:
     """
     Recursively extract timestamp-like values from protobuf data.
 
@@ -64,6 +68,17 @@ def extract_timestamps_from_protobuf(pb_data: dict, parent_key: str = "") -> lis
         List of (field_path, value, human_readable) tuples
     """
     timestamps = []
+    if seen is None:
+        seen = set()
+
+    def add_timestamp(path: str, value: int | float, human: str | None):
+        if human is None:
+            return
+        key = (path, value)
+        if key in seen:
+            return
+        seen.add(key)
+        timestamps.append((path, value, human))
 
     if isinstance(pb_data, dict):
         for key, value in pb_data.items():
@@ -78,26 +93,31 @@ def extract_timestamps_from_protobuf(pb_data: dict, parent_key: str = "") -> lis
                 if 'u64' in value:
                     is_ts, human = looks_like_timestamp(value['u64'], key)
                     if is_ts:
-                        timestamps.append((f"{field_path}.u64", value['u64'], human))
+                        add_timestamp(f"{field_path}.u64", value['u64'], human)
 
                 if 'u32' in value:
                     is_ts, human = looks_like_timestamp(value['u32'], key)
                     if is_ts:
-                        timestamps.append((f"{field_path}.u32", value['u32'], human))
+                        add_timestamp(f"{field_path}.u32", value['u32'], human)
 
                 # Recurse
-                timestamps.extend(extract_timestamps_from_protobuf(value, field_path))
+                timestamps.extend(
+                    extract_timestamps_from_protobuf(value, field_path, seen)
+                )
 
             elif isinstance(value, (int, float)):
                 is_ts, human = looks_like_timestamp(value, key)
                 if is_ts:
-                    timestamps.append((field_path, value, human))
+                    add_timestamp(field_path, value, human)
 
             elif isinstance(value, list):
                 for i, item in enumerate(value):
                     if isinstance(item, dict):
-                        timestamps.extend(extract_timestamps_from_protobuf(
-                            item, f"{field_path}[{i}]"))
+                        timestamps.extend(
+                            extract_timestamps_from_protobuf(
+                                item, f"{field_path}[{i}]", seen
+                            )
+                        )
 
     return timestamps
 

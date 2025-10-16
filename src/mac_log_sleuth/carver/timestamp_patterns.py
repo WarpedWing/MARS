@@ -14,36 +14,73 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
-from urllib.parse import unquote_to_bytes
 
 # Timestamp format detection regex
 # Matches numbers with 9+ digits (potential timestamps)
-TIMESTAMP_REGEX = re.compile(rb"[0-9]{9,}\.?[0-9]*")
+# Uses negative lookbehind/lookahead to avoid matching within larger numbers
+# Matches complete numbers only (bounded by non-digits or start/end of string)
+TIMESTAMP_REGEX = re.compile(rb"(?<![0-9])[0-9]{9,}(?:\.[0-9]+)?(?![0-9])")
 
 # Hexadecimal timestamp regex (e.g., 5b994548.5ad909e0)
 # Matches 8 hex chars, optional dot, 8 hex chars
-HEX_TIMESTAMP_REGEX = re.compile(rb"[0-9a-fA-F]{8}\.?[0-9a-fA-F]{8}")
+# Uses negative lookbehind/lookahead to avoid matching within larger hex strings
+# This prevents matching "21165313" from within "20180321165313"
+HEX_TIMESTAMP_REGEX = re.compile(rb"(?<![0-9a-fA-F])[0-9a-fA-F]{8}(?:\.[0-9a-fA-F]{8})?(?![0-9a-fA-F])")
+
+# UUID pattern (RFC 4122 format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX)
+# Used to exclude UUID segments from timestamp detection
+UUID_REGEX = re.compile(rb"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", re.IGNORECASE)
 
 # Global timestamp validity window (will be overridden by CLI args)
 TARGET_START = datetime(2015, 1, 1, tzinfo=UTC)
 TARGET_END = datetime(2030, 1, 1, tzinfo=UTC)
 
 
-def url_decode_bytes(data: bytes) -> bytes:
+def url_decode_bytes(data: bytes) -> tuple[bytes, list[int]]:
     """
-    URL-decode bytes in place, handling common percent-encoded characters.
+    URL-decode bytes while tracking the source offset for each decoded byte.
 
     This ensures we find timestamps in URL-encoded strings like:
     message:%3CetPan.5b994548.5ad909e0.fe@example.org%3E
 
-    Returns decoded bytes, falls back to original if decoding fails.
+    Returns (decoded bytes, offset map). The offset map aligns each byte in the
+    decoded output with the index of the corresponding byte in the original
+    input (typically the '%' for percent-encoded sequences).
     """
-    try:
-        # unquote_to_bytes handles %XX encoding
-        return unquote_to_bytes(data)
-    except Exception:
-        # If decoding fails, return original
-        return data
+    decoded = bytearray()
+    mapping: list[int] = []
+    i = 0
+    length = len(data)
+
+    while i < length:
+        b = data[i]
+        if b == 0x25 and i + 2 < length:  # '%'
+            hex_chunk = data[i + 1 : i + 3]
+            try:
+                decoded_byte = int(hex_chunk, 16)
+                # Validate byte is in valid range (0-255)
+                if not (0 <= decoded_byte <= 255):
+                    # Invalid percent-encoding, treat '%' as literal
+                    decoded.append(b)
+                    mapping.append(i)
+                    i += 1
+                    continue
+            except ValueError:
+                # Invalid hex in percent-encoding, treat '%' as literal
+                decoded.append(b)
+                mapping.append(i)
+                i += 1
+                continue
+
+            decoded.append(decoded_byte)
+            mapping.append(i)
+            i += 3
+        else:
+            decoded.append(b)
+            mapping.append(i)
+            i += 1
+
+    return bytes(decoded), mapping
 
 
 def set_timestamp_range(start: datetime, end: datetime):
@@ -174,6 +211,8 @@ def find_hex_timestamp_candidates(page: bytes) -> list[tuple[int, str, str, str]
     When pattern like "5b994548.5ad909e0" is found, extracts BOTH timestamps.
     Searches both original page AND URL-decoded version to catch encoded timestamps.
 
+    Excludes UUIDs (e.g., 6E1DD98F-67C5-4222-A810-5BD8C88D8745) to prevent false positives.
+
     Returns:
         List of (offset, hex_value, kind, human_readable) tuples
         where hex_value is the original hex string (e.g., "5b994548")
@@ -182,15 +221,33 @@ def find_hex_timestamp_candidates(page: bytes) -> list[tuple[int, str, str, str]
     seen_offsets = set()
 
     # Search both original and decoded versions
+    decoded_page, decoded_map = url_decode_bytes(page)
     pages_to_search = [
-        (page, 0),  # Original page with no offset adjustment
-        (url_decode_bytes(page), 0),  # Decoded page
+        (page, list(range(len(page)))),  # Original page with identity map
+        (decoded_page, decoded_map),  # Decoded page with offset mapping
     ]
 
-    for search_page, offset_adjust in pages_to_search:
+    for search_page, offset_map in pages_to_search:
+        # Build exclusion ranges for UUID segments
+        # UUIDs have format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+        # We want to exclude all hex segments within UUIDs
+        uuid_ranges = set()
+        for uuid_match in UUID_REGEX.finditer(search_page):
+            uuid_start = uuid_match.start()
+            uuid_end = uuid_match.end()
+            # Add all byte positions within this UUID to exclusion set
+            for pos in range(uuid_start, uuid_end):
+                uuid_ranges.add(pos)
+
         for m in HEX_TIMESTAMP_REGEX.finditer(search_page):
             try:
                 hex_str = m.group(0)
+
+                # Skip if this hex string overlaps with a UUID
+                hex_start = m.start()
+                hex_end = m.end()
+                if any(pos in uuid_ranges for pos in range(hex_start, hex_end)):
+                    continue
 
                 # Quick filter: skip if all zeros
                 if hex_str.replace(b".", b"").replace(b"0", b"") == b"":
@@ -201,7 +258,10 @@ def find_hex_timestamp_candidates(page: bytes) -> list[tuple[int, str, str, str]
 
                 for kind, hex_val, human in results:
                     # Calculate offset for this specific hex value within the match
-                    offset = m.start() + hex_str.find(hex_val.encode()) + offset_adjust
+                    relative_idx = m.start() + hex_str.find(hex_val.encode())
+                    if relative_idx >= len(offset_map):
+                        continue
+                    offset = offset_map[relative_idx]
 
                     # Deduplicate by offset
                     if offset in seen_offsets:
@@ -239,12 +299,13 @@ def find_timestamp_candidates(page: bytes) -> list[tuple[int, float]]:
     seen_offsets = set()
 
     # Search both original and decoded versions
+    decoded_page, decoded_map = url_decode_bytes(page)
     pages_to_search = [
-        (page, 0),  # Original page
-        (url_decode_bytes(page), 0),  # Decoded page
+        (page, list(range(len(page)))),  # Original page
+        (decoded_page, decoded_map),  # Decoded page with mapping to original offsets
     ]
 
-    for search_page, offset_adjust in pages_to_search:
+    for search_page, offset_map in pages_to_search:
         # Find decimal timestamps
         for m in TIMESTAMP_REGEX.finditer(search_page):
             try:
@@ -264,7 +325,10 @@ def find_timestamp_candidates(page: bytes) -> list[tuple[int, float]]:
                 if digit_count not in (10, 13, 16, 17, 19):
                     continue
 
-                offset = m.start() + offset_adjust
+                offset_idx = m.start()
+                if offset_idx >= len(offset_map):
+                    continue
+                offset = offset_map[offset_idx]
 
                 # Deduplicate by offset
                 if offset in seen_offsets:
