@@ -41,12 +41,56 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-# Local protobuf helper
+# Local protobuf helper - prefer bbpb-based decoder
 try:
-    from protobuf_extractor import maybe_decode_protobuf, to_json
+    # Try relative import first (when running as module)
+    try:
+        from .protobuf_decoder_bbpb import (
+            BBPB_AVAILABLE,
+            decode_protobuf_bbpb,
+            extract_numbers_from_message,
+            extract_strings_from_message,
+            is_likely_protobuf,
+            maybe_decode_protobuf,
+            to_json,
+        )
+    except ImportError:
+        # Fallback to direct import (when running as script)
+        from protobuf_decoder_bbpb import (
+            BBPB_AVAILABLE,
+            decode_protobuf_bbpb,
+            extract_numbers_from_message,
+            extract_strings_from_message,
+            is_likely_protobuf,
+            maybe_decode_protobuf,
+            to_json,
+        )
+
+    PROTOBUF_DECODER_AVAILABLE = True
+    PROTOBUF_DECODER_NAME = "blackboxprotobuf" if BBPB_AVAILABLE else "fallback"
 except Exception:
-    maybe_decode_protobuf = None
-    to_json = None
+    # Fallback to old decoder if bbpb not available
+    try:
+        try:
+            from .protobuf_extractor import maybe_decode_protobuf, to_json
+        except ImportError:
+            from protobuf_extractor import maybe_decode_protobuf, to_json
+
+        PROTOBUF_DECODER_AVAILABLE = True
+        PROTOBUF_DECODER_NAME = "legacy"
+        decode_protobuf_bbpb = None
+        is_likely_protobuf = None
+        extract_strings_from_message = None
+        extract_numbers_from_message = None
+    except Exception:
+        maybe_decode_protobuf = None
+        to_json = None
+        decode_protobuf_bbpb = None
+        is_likely_protobuf = None
+        extract_strings_from_message = None
+        extract_numbers_from_message = None
+        PROTOBUF_DECODER_AVAILABLE = False
+        PROTOBUF_DECODER_NAME = "none"
 
 # Local protobuf timestamp extractor
 try:
@@ -446,10 +490,15 @@ def open_out_db(path: Path) -> sqlite3.Connection:
             parent_abs_offset INTEGER,
             page_no INTEGER,
             abs_offset INTEGER,
-            json_pretty TEXT,
-            has_timestamps INTEGER,     -- Boolean: 1 if timestamps found, 0 otherwise
-            timestamp_count INTEGER,    -- Number of timestamps found
-            timestamp_fields TEXT       -- JSON array of timestamp field names and values
+            json_pretty TEXT,               -- Full decoded message as JSON
+            schema TEXT,                    -- Inferred field types (simplified)
+            strings_extracted TEXT,         -- All text strings found (JSON array)
+            numbers_extracted TEXT,         -- All numbers found (JSON array)
+            field_count INTEGER,            -- Number of top-level fields
+            has_timestamps INTEGER,         -- Boolean: 1 if timestamps found, 0 otherwise
+            timestamp_count INTEGER,        -- Number of timestamps found
+            timestamp_fields TEXT,          -- JSON array of timestamp field names and values
+            decoder_used TEXT               -- Which decoder was used (blackboxprotobuf, legacy, etc.)
         );
     """
     )
@@ -504,12 +553,9 @@ def main():
     ap.add_argument("db", help="SQLite file to carve")
     ap.add_argument("--no-cluster", action="store_true", help="Disable page clustering")
     ap.add_argument(
-        "--no-protobuf", action="store_true", help="Skip protobuf decoding entirely"
-    )
-    ap.add_argument(
-        "--force-protobuf",
+        "--no-protobuf",
         action="store_true",
-        help="Force protobuf decoding even if schema has no BLOB columns (may produce false positives)",
+        help="Skip protobuf decoding (default: enabled for maximum data recovery)",
     )
     ap.add_argument(
         "--no-pretty-protobuf",
@@ -563,17 +609,17 @@ def main():
 
     page_size, encoding, page_count = read_sqlite_header_info(src)
 
-    # Check if schema has BLOB columns (to avoid false positive protobufs)
+    # Check if schema has BLOB columns (informational only)
     schema_has_blobs = check_schema_has_blobs(src)
 
     # Determine if we should decode protobufs
+    # DEFAULT: Always decode (forensic recovery priority)
     # Logic:
     # - If --no-protobuf: never decode
-    # - If --force-protobuf: always decode
-    # - Otherwise: only decode if schema has BLOBs
-    should_decode_protobuf = not args.no_protobuf and (
-        args.force_protobuf or schema_has_blobs
-    )
+    # - Otherwise: always decode (even without BLOB columns)
+    #   Rationale: Protobufs may exist in TEXT/INTEGER fields, deleted pages,
+    #   or overflow pages. BlackBoxProtobuf is good at rejecting garbage.
+    should_decode_protobuf = not args.no_protobuf
 
     # Determine output directory (default: same directory as source database)
     output_base = Path(args.output_dir) if args.output_dir else src.parent
@@ -600,27 +646,22 @@ def main():
 
     # Protobuf status reporting
     if should_decode_protobuf:
+        decoder_info = f" (using {PROTOBUF_DECODER_NAME})"
         if schema_has_blobs:
             print(
-                f"{ANSI_GREEN}[+]{ANSI_RESET} Schema contains BLOBs - "
-                "protobuf decoding enabled"
+                f"{ANSI_GREEN}[+]{ANSI_RESET} Protobuf decoding enabled - "
+                f"schema contains BLOBs{decoder_info}"
             )
         else:
             print(
-                f"{ANSI_YELLOW}[!]{ANSI_RESET} Protobuf decoding forced "
-                "(schema has no BLOBs - may produce false positives)"
+                f"{ANSI_GREEN}[+]{ANSI_RESET} Protobuf decoding enabled - "
+                f"searching all pages{decoder_info}"
             )
     else:
-        if args.no_protobuf:
-            print(
-                f"{ANSI_CYAN}[•]{ANSI_RESET} "
-                "Protobuf decoding disabled by --no-protobuf"
-            )
-        else:
-            print(
-                f"{ANSI_CYAN}[•]{ANSI_RESET} Schema has no BLOBs - "
-                "protobuf decoding skipped (use --force-protobuf to override)"
-            )
+        print(
+            f"{ANSI_CYAN}[•]{ANSI_RESET} "
+            "Protobuf decoding disabled by --no-protobuf"
+        )
 
     if CLASSIFIER_V2_AVAILABLE:
         print(f"{ANSI_GREEN}[+]{ANSI_RESET} Using V2 classifier (Unfurl + time_decode)")
@@ -1036,21 +1077,31 @@ def main():
 
                             entry["linked"] = True
 
-                # Protobufs → JSONL
-                if (
-                    should_decode_protobuf
-                    and maybe_decode_protobuf is not None
-                    and to_json is not None
-                ):
+                # Protobufs → JSONL (using blackboxprotobuf for better decoding)
+                if should_decode_protobuf and PROTOBUF_DECODER_AVAILABLE:
                     for off, blob in find_blob_candidates(page, min_len=16):
                         abs_off = abs_page_start + off
                         # Deduplicate by absolute offset
                         if abs_off in seen_pb_abs:
                             continue
 
-                        parsed = maybe_decode_protobuf(blob, max_depth=4)
-                        if not parsed:
-                            continue
+                        # Use bbpb decoder if available for better output
+                        if decode_protobuf_bbpb is not None:
+                            result = decode_protobuf_bbpb(blob)
+                            if not result:
+                                continue
+                            parsed = result["message"]
+                            jtxt = result["json"]
+                            schema = json.dumps(result["schema"])
+                            field_count = len(parsed) if isinstance(parsed, dict) else 0
+                        else:
+                            # Fallback to legacy decoder
+                            parsed = maybe_decode_protobuf(blob, max_depth=4)
+                            if not parsed:
+                                continue
+                            jtxt = to_json(parsed, pretty=(not args.no_pretty_protobuf))
+                            schema = None
+                            field_count = len(parsed) if isinstance(parsed, dict) else 0
 
                         # Filter out garbage protobufs (optional, only if module available)
                         if PROTOBUF_FILTER_AVAILABLE:
@@ -1063,8 +1114,17 @@ def main():
                         else:
                             analysis = None
 
+                        # Extract strings and numbers for easier analysis
+                        if extract_strings_from_message and extract_numbers_from_message:
+                            strings = extract_strings_from_message(parsed)
+                            numbers = extract_numbers_from_message(parsed)
+                            strings_json = json.dumps(strings) if strings else None
+                            numbers_json = json.dumps(numbers) if numbers else None
+                        else:
+                            strings_json = None
+                            numbers_json = None
+
                         seen_pb_abs.add(abs_off)
-                        jtxt = to_json(parsed, pretty=(not args.no_pretty_protobuf))
 
                         # Prepare timestamp analysis for database
                         if analysis and analysis.get("has_timestamps"):
@@ -1081,25 +1141,49 @@ def main():
                             ts_fields = None
                             ts_entries = []
 
-                        # Insert into database with timestamp info
+                        # Insert into database with rich metadata
                         cur.execute(
                             "INSERT INTO carved_protobufs(parent_abs_offset,page_no,abs_offset,"
-                            "json_pretty,has_timestamps,timestamp_count,timestamp_fields) "
-                            "VALUES (?,?,?,?,?,?,?)",
-                            (abs_off, pno, abs_off, jtxt, has_ts, ts_count, ts_fields),
+                            "json_pretty,schema,strings_extracted,numbers_extracted,field_count,"
+                            "has_timestamps,timestamp_count,timestamp_fields,decoder_used) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (
+                                abs_off,
+                                pno,
+                                abs_off,
+                                jtxt,
+                                schema,
+                                strings_json,
+                                numbers_json,
+                                field_count,
+                                has_ts,
+                                ts_count,
+                                ts_fields,
+                                PROTOBUF_DECODER_NAME,
+                            ),
                         )
 
-                        # Build JSONL output with optional timestamp analysis
+                        # Build JSONL output with richer metadata
                         jsonl_entry = {
                             "parent_abs_offset": abs_off,
                             "page_no": pno,
                             "abs_offset": abs_off,
+                            "decoder": PROTOBUF_DECODER_NAME,
+                            "field_count": field_count,
                             "protobuf": (
                                 json.loads(jtxt)
                                 if not args.no_pretty_protobuf
                                 else parsed
                             ),
                         }
+
+                        # Add extracted content for easy searching
+                        if strings_json:
+                            jsonl_entry["strings"] = json.loads(strings_json)
+                        if numbers_json:
+                            jsonl_entry["numbers"] = json.loads(numbers_json)
+                        if schema:
+                            jsonl_entry["schema"] = json.loads(schema)
 
                         # Add timestamp analysis to JSONL if available
                         if has_ts:

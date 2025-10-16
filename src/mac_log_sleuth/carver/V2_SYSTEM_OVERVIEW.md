@@ -6,7 +6,7 @@ The V2 system replaces fuzzy confidence scores (0.0-1.0) with **clear categorica
 
 ## Architecture
 
-```
+```bash
 ┌─────────────────────────────────────────────────────────┐
 │                  SQLite Carver v3.4                     │
 │              (carve_sqlite.py - main)                   │
@@ -19,15 +19,15 @@ The V2 system replaces fuzzy confidence scores (0.0-1.0) with **clear categorica
 ┌─────────────────────────────────────────────────────────┐
 │         timestamp_patterns.py                           │
 │  • find_timestamp_candidates()                          │
-│  • Pre-filter by digit count (10, 13, 16-17, 19)       │
+│  • Pre-filter by digit count (10, 13, 16-17, 19)        │
 └─────────────────────────────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │         url_analyzer.py                                 │
-│  • parse_url_with_unfurl()   ← Uses Unfurl             │
+│  • parse_url_with_unfurl()   ← Uses Unfurl              │
 │  • Extracts timestamps from URLs                        │
-│  • Identifies IDs in URLs (Snowflake, etc.)            │
+│  • Identifies IDs in URLs (Snowflake, etc.)             │
 │  • Returns URLContext with all findings                 │
 └─────────────────────────────────────────────────────────┘
                          │
@@ -80,6 +80,7 @@ The V2 system replaces fuzzy confidence scores (0.0-1.0) with **clear categorica
 ## Example Usage
 
 ### Basic (Balanced Mode)
+
 ```bash
 python carve_sqlite.py /path/to/facebook.db
 ```
@@ -87,6 +88,7 @@ python carve_sqlite.py /path/to/facebook.db
 Output includes all confirmed and likely timestamps, filters out Snowflake IDs.
 
 ### Strict (High Precision)
+
 ```bash
 python carve_sqlite.py /path/to/facebook.db --filter-mode strict
 ```
@@ -94,6 +96,7 @@ python carve_sqlite.py /path/to/facebook.db --filter-mode strict
 Only keeps timestamps with strong evidence (field names or URL context).
 
 ### See Everything
+
 ```bash
 python carve_sqlite.py /path/to/facebook.db --filter-mode all
 ```
@@ -101,6 +104,7 @@ python carve_sqlite.py /path/to/facebook.db --filter-mode all
 Includes all candidates for manual review.
 
 ### Custom Output Directory
+
 ```bash
 python carve_sqlite.py /path/to/db.sqlite --output-dir /output/path
 ```
@@ -137,6 +141,7 @@ page_no,page_offset,abs_offset,cluster_id,kind,value_text,value_num,ts_kind_gues
 ## SQL Queries
 
 ### Get Only Confirmed Timestamps
+
 ```sql
 SELECT ts_human, value_num, ts_reason, ts_field_name
 FROM carved_all
@@ -146,6 +151,7 @@ ORDER BY value_num;
 ```
 
 ### Classification Distribution
+
 ```sql
 SELECT
     ts_classification,
@@ -158,6 +164,7 @@ ORDER BY count DESC;
 ```
 
 ### Find Snowflake IDs with Embedded Timestamps
+
 ```sql
 SELECT
     value_num as snowflake_id,
@@ -169,6 +176,7 @@ WHERE ts_kind_guess = 'snowflake'
 ```
 
 ### Timestamps from Specific Platform
+
 ```sql
 SELECT DISTINCT ts_human, ts_reason
 FROM carved_all
@@ -179,7 +187,7 @@ ORDER BY value_num;
 
 ## Terminal Output
 
-```
+```bash
 ╭──────────────────────────────╮
 │      SQLite Carver v3.4      │
 │      by WarpedWing Labs      │
@@ -216,12 +224,14 @@ Kept (balanced mode): 4,626/15,234 (30.4%)
 ## Key Improvements Over V1
 
 ### V1 (Confidence Scores)
+
 - [-] Fuzzy scores (0.5-0.7) weren't actionable
 - [-] Hard to understand why a score was given
 - [-] No URL awareness
 - [-] No Snowflake ID detection
 
 ### V2 (Categorical Classification)
+
 - [+] Clear labels: "CONFIRMED_ID" vs "CONFIRMED_TIMESTAMP"
 - [+] Transparent reasoning in `ts_reason` column
 - [+] URL-aware (uses Unfurl)
@@ -256,16 +266,19 @@ Expected: 40-60% CONFIRMED_ID (Snowflake IDs), 20-30% CONFIRMED_TIMESTAMP
 ## Troubleshooting
 
 ### "Warning: V2 classifier not available"
+
 - Unfurl or time_decode not installed
 - Falls back to simple classifier
 - Run: `uv pip install dfir-unfurl time-decode`
 
 ### Too many/few timestamps kept
+
 - Adjust `--filter-mode`:
   - Too many false positives → use `strict`
   - Missing real timestamps → use `permissive`
 
 ### Want to see what was filtered
+
 ```sql
 -- See all candidates, even filtered ones
 SELECT * FROM carved_all WHERE kind = 'ts' ORDER BY ts_classification;

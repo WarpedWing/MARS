@@ -32,7 +32,7 @@ Every detected timestamp receives a **confidence score** (0.0 to 1.0):
 
 **Strongest signal**. Extracts field names from context:
 
-```
+```bash
 ✓ created_at: 1609459200      → +0.35 (timestamp keyword)
 ✗ event_id: 1234567890123456  → -0.40 (ID keyword)
 ```
@@ -45,7 +45,7 @@ ID keywords: `id`, `uid`, `event_id`, `notification_id`, `user_id`, `msg_id`, `t
 
 **Medium signal**. Checks surrounding text (±50 bytes):
 
-```
+```bash
 ✓ "last modified time" 1609459200     → +0.20
 ✗ "user id value" 1234567890123456    → -0.25
 ```
@@ -54,7 +54,7 @@ ID keywords: `id`, `uid`, `event_id`, `notification_id`, `user_id`, `msg_id`, `t
 
 **Medium signal**. Real timestamps often appear in pairs/groups:
 
-```
+```bash
 ✓ created_at: 1609459200
   updated_at: 1609459300              → +0.15 (2+ nearby timestamps)
 
@@ -65,7 +65,7 @@ ID keywords: `id`, `uid`, `event_id`, `notification_id`, `user_id`, `msg_id`, `t
 
 **Medium signal**. IDs increment sequentially, timestamps scatter:
 
-```
+```bash
 ✗ 1000000001, 1000000002, 1000000003  → -0.30 (sequential = IDs)
 ✓ 1609459200, 1612137600, 1614556800  → No penalty (scattered)
 ```
@@ -74,7 +74,7 @@ ID keywords: `id`, `uid`, `event_id`, `notification_id`, `user_id`, `msg_id`, `t
 
 **Weak-medium signal**. Suspicious patterns suggest IDs:
 
-```
+```bash
 ✗ 10000000123456789  → -0.20 (starts with 10000...)
 ✗ 11111111111111111  → -0.20 (too few unique digits)
 ```
@@ -83,7 +83,7 @@ ID keywords: `id`, `uid`, `event_id`, `notification_id`, `user_id`, `msg_id`, `t
 
 **Weak signal**. Real timestamps are often 4 or 8-byte aligned in binary formats:
 
-```
+```bash
 ✓ Offset 0x0100 (8-byte aligned)  → +0.05
 ✓ Offset 0x0104 (4-byte aligned)  → +0.02
 ✗ Offset 0x0103 (unaligned)       → No bonus
@@ -106,6 +106,7 @@ python carve_sqlite.py database.sqlite --min-confidence 0.8
 ```
 
 Only keeps HIGH confidence timestamps. Use when:
+
 - You want **very clean** results
 - You're okay missing some edge cases
 - You're analyzing databases with lots of ID pollution
@@ -117,6 +118,7 @@ python carve_sqlite.py database.sqlite --min-confidence 0.2
 ```
 
 Includes more uncertain values. Use when:
+
 - You want to see **everything** for manual review
 - You're doing exploratory analysis
 - You can filter results later in your workflow
@@ -243,7 +245,7 @@ GROUP BY category;
 
 ### Modules
 
-```
+```bash
 carver/
 ├── carve_sqlite.py           # Main carver (v3.4)
 ├── timestamp_validator.py    # Confidence scoring engine
@@ -253,7 +255,7 @@ carver/
 
 ### Flow
 
-```
+```bash
 1. find_timestamps_with_interpretation()
    └─> Detects potential timestamps (10-19 digit numbers)
 

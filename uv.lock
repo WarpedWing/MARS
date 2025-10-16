@@ -180,6 +180,7 @@ name = "mac-log-sleuth"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "bbpb" },
     { name = "dfir-unfurl" },
     { name = "plotly" },
     { name = "time-decode" },
@@ -198,6 +199,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "bbpb", specifier = ">=1.4.2" },
     { name = "dfir-unfurl", specifier = ">=20250810" },
     { name = "kaleido", marker = "extra == 'plotly'", specifier = ">=1.1.0" },
     { name = "pandas", marker = "extra == 'plotly'", specifier = ">=2.3.3" },

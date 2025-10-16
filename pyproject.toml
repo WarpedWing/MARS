@@ -5,6 +5,7 @@ description = "..."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "bbpb>=1.4.2",
     "dfir-unfurl>=20250810",
     "plotly>=6.3.1",
     "time-decode>=10.1.0",
