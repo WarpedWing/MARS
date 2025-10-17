@@ -50,6 +50,7 @@ class LogType(Enum):
     PLIST_BINARY = "plist_binary"
     JSON = "json"
     JSONLZ4 = "jsonlz4"  # Firefox compressed JSON
+    SQLITE = "sqlite"  # SQLite database (will be sub-categorized by schema)
 
 
 @dataclass

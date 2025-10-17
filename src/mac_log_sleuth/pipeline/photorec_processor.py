@@ -119,6 +119,42 @@ class RecoveredFile:
         }
 
 
+@dataclass
+class SQLiteSchema:
+    """Schema fingerprint for a SQLite database."""
+
+    tables: list[str]  # Table names sorted alphabetically
+    table_schemas: dict[str, str]  # Table name -> CREATE TABLE statement
+    row_counts: dict[str, int]  # Table name -> row count
+    size_bytes: int
+    schema_hash: str  # MD5 hash of sorted table names for quick matching
+
+    def matches(self, other: "SQLiteSchema", tolerance: float = 0.8) -> bool:
+        """
+        Check if two schemas match (for identifying fragments).
+
+        Args:
+            other: Another schema to compare against
+            tolerance: Minimum fraction of matching tables (0.0-1.0)
+
+        Returns:
+            True if schemas match within tolerance
+        """
+        if not self.tables or not other.tables:
+            return False
+
+        # Quick check: schema hash
+        if self.schema_hash == other.schema_hash:
+            return True
+
+        # Detailed check: table overlap
+        common_tables = set(self.tables) & set(other.tables)
+        max_tables = max(len(self.tables), len(other.tables))
+        overlap = len(common_tables) / max_tables if max_tables > 0 else 0
+
+        return overlap >= tolerance
+
+
 # ============================================================================
 # Timestamp Parsing & Log Line Sorting
 # ============================================================================
@@ -301,6 +337,77 @@ class PhotoRecProcessor:
         except Exception:
             return ""
 
+    def extract_sqlite_schema(self, db_path: Path, max_size_mb: int = 50) -> SQLiteSchema | None:
+        """
+        Extract schema fingerprint from SQLite database.
+
+        Args:
+            db_path: Path to SQLite database
+            max_size_mb: Skip databases larger than this (likely library databases)
+
+        Returns:
+            SQLiteSchema object or None if extraction failed or database too large
+        """
+        try:
+            size_bytes = db_path.stat().st_size
+            size_mb = size_bytes / (1024 * 1024)
+
+            # Skip large databases (likely system libraries, not forensic artifacts)
+            if size_mb > max_size_mb:
+                self.log(f"Skipping large database {db_path.name} ({size_mb:.1f}MB)", "DEBUG")
+                return None
+
+            # Open database read-only
+            conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=5.0)
+            cursor = conn.cursor()
+
+            # Get all table names (excluding internal SQLite tables)
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+            """)
+            tables = [row[0] for row in cursor.fetchall()]
+
+            if not tables:
+                conn.close()
+                return None
+
+            # Get CREATE TABLE statements for each table
+            table_schemas = {}
+            row_counts = {}
+            for table in tables:
+                # Get schema
+                cursor.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,))
+                result = cursor.fetchone()
+                if result:
+                    table_schemas[table] = result[0] or ""
+
+                # Get row count (with timeout protection)
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM '{table}'")
+                    row_counts[table] = cursor.fetchone()[0]
+                except Exception:
+                    row_counts[table] = -1  # Error getting count
+
+            conn.close()
+
+            # Create schema hash from sorted table names
+            schema_str = "|".join(sorted(tables))
+            schema_hash = hashlib.md5(schema_str.encode()).hexdigest()
+
+            return SQLiteSchema(
+                tables=tables,
+                table_schemas=table_schemas,
+                row_counts=row_counts,
+                size_bytes=size_bytes,
+                schema_hash=schema_hash,
+            )
+
+        except Exception as e:
+            self.log(f"Failed to extract schema from {db_path.name}: {e}", "DEBUG")
+            return None
+
     def iter_photorec_files(self) -> list[Path]:
         """
         Find all files in PhotoRec output directories.
@@ -324,7 +431,8 @@ class PhotoRecProcessor:
         for folder_name in relevant_folders:
             folder_path = self.photorec_dir / folder_name
             if folder_path.exists() and folder_path.is_dir():
-                dir_files = [f for f in folder_path.iterdir() if f.is_file()]
+                # Recursively find all files (handles subdirectories like sqlite/1/, sqlite/2/, etc.)
+                dir_files = [f for f in folder_path.rglob("*") if f.is_file()]
                 files.extend(dir_files)
                 self.log(f"  {folder_name}/: {len(dir_files)} files", "DEBUG")
 
@@ -368,7 +476,7 @@ class PhotoRecProcessor:
                 md5 = self.compute_md5(file_path)
                 return RecoveredFile(
                     source_path=file_path,
-                    file_type=LogType.UNKNOWN,  # Will categorize by schema later
+                    file_type=LogType.SQLITE,
                     confidence=1.0,
                     size=size,
                     md5=md5,
@@ -830,6 +938,80 @@ class PhotoRecProcessor:
                 line_number=line_number,
             )
 
+    def group_sqlite_databases(self):
+        """
+        Phase 4: Group SQLite databases by schema fingerprint.
+
+        Extracts schema from each database and groups fragments with matching schemas.
+        Filters out large library databases (>50MB) as they're typically not forensic artifacts.
+        """
+        self.log("=" * 70)
+        self.log("Phase 4: Grouping SQLite Databases by Schema")
+        self.log("=" * 70)
+
+        if "uncategorized" not in self.sqlite_dbs or not self.sqlite_dbs["uncategorized"]:
+            self.log("No SQLite databases to process")
+            return
+
+        uncategorized = self.sqlite_dbs["uncategorized"]
+        self.log(f"Processing {len(uncategorized)} SQLite databases...")
+
+        # Extract schemas and group by schema hash
+        schema_groups: dict[str, list[tuple[RecoveredFile, SQLiteSchema]]] = defaultdict(list)
+        skipped_large = 0
+        skipped_error = 0
+
+        for recovered in uncategorized:
+            schema = self.extract_sqlite_schema(recovered.source_path, max_size_mb=50)
+
+            if not schema:
+                size_mb = recovered.size / (1024 * 1024)
+                if size_mb > 50:
+                    skipped_large += 1
+                else:
+                    skipped_error += 1
+                continue
+
+            # Group by schema hash
+            schema_groups[schema.schema_hash].append((recovered, schema))
+
+        # Report findings
+        self.log(f"\nFound {len(schema_groups)} unique database schemas")
+        self.log(f"Skipped {skipped_large} large databases (>50MB, likely system libraries)")
+        if skipped_error > 0:
+            self.log(f"Skipped {skipped_error} databases (errors or empty)")
+
+        # Print detailed schema information
+        for idx, (schema_hash, group) in enumerate(sorted(schema_groups.items(), key=lambda x: -len(x[1])), 1):
+            fragment_count = len(group)
+            first_recovered, first_schema = group[0]
+
+            # Get representative info from first database in group
+            tables_str = ", ".join(first_schema.tables[:3])
+            if len(first_schema.tables) > 3:
+                tables_str += f", ... ({len(first_schema.tables)} total)"
+
+            total_size = sum(r.size for r, _ in group)
+            total_size_mb = total_size / (1024 * 1024)
+
+            self.log(f"\n  Schema {idx}: {fragment_count} fragment(s), {total_size_mb:.1f}MB total")
+            self.log(f"    Tables: {tables_str}")
+            self.log(f"    Hash: {schema_hash[:16]}...")
+
+            # Store grouped databases with meaningful key
+            group_key = f"schema_{schema_hash[:8]}_{first_schema.tables[0] if first_schema.tables else 'unknown'}"
+            self.sqlite_dbs[group_key] = [r for r, _ in group]
+
+            # Show fragment details in verbose mode
+            if self.verbose and fragment_count > 1:
+                for recovered, schema in group:
+                    total_rows = sum(c for c in schema.row_counts.values() if c > 0)
+                    size_mb = recovered.size / (1024 * 1024)
+                    self.log(f"      - {recovered.source_path.name}: {size_mb:.1f}MB, {total_rows:,} rows", "DEBUG")
+
+        # Remove uncategorized now that we've grouped them
+        del self.sqlite_dbs["uncategorized"]
+
     def scan_and_classify(self):
         """
         Phase 1: Scan all PhotoRec files and classify them.
@@ -873,8 +1055,8 @@ class PhotoRecProcessor:
                 self.text_logs[recovered.file_type].append(recovered)
                 self.stats["text_logs"] += 1
 
-            elif recovered.file_type == LogType.UNKNOWN and recovered.reasons and "SQLite" in recovered.reasons[0]:
-                # SQLite DB - will categorize by schema
+            elif recovered.file_type == LogType.SQLITE:
+                # SQLite DB - will categorize by schema later
                 self.sqlite_dbs["uncategorized"].append(recovered)
                 self.stats["sqlite_dbs"] += 1
 
@@ -1013,6 +1195,9 @@ Examples:
 
     # Run phase 3: merge text logs chronologically
     processor.merge_text_logs()
+
+    # Run phase 4: group SQLite databases by schema
+    processor.group_sqlite_databases()
 
     # Save report
     processor.save_report()
