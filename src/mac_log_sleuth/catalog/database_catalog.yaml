@@ -339,6 +339,16 @@ spotlight:
     category: system
     notes: "Complex binary format - not standard SQLite"
 
+  - name: "Spotlight Volume Index"
+    path: ".Spotlight-V100/**/*"
+    glob_pattern: ".Spotlight-V100/**/*"
+    description: "Volume-level Spotlight metadata store"
+    versions: ["10.4+"]
+    priority: medium
+    schema_stable: volatile
+    category: system
+    notes: "Root-level Spotlight index - complex binary format with metadata for entire volume"
+
 quarantine:
   - name: "Quarantine Events"
     path: "Users/*/Library/Preferences/com.apple.LaunchServices.QuarantineEventsV2"
@@ -373,6 +383,36 @@ powerlog:
     category: system
     notes: "Custom extension .PLSQL - contains detailed power metrics"
 
+  - name: "Current Powerlog"
+    path: "private/var/db/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL"
+    glob_pattern: "**/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL"
+    description: "Current active battery and power usage log"
+    versions: ["10.9+"]
+    priority: high
+    schema_stable: volatile
+    category: system
+    notes: "Live PLSQL database tracking current power metrics"
+
+  - name: "Powerlog Archives (Compressed)"
+    path: "private/var/db/powerlog/Library/BatteryLife/Archives/*.gz"
+    glob_pattern: "**/powerlog/Library/BatteryLife/Archives/*.gz"
+    description: "Archived compressed power logs"
+    versions: ["10.9+"]
+    priority: medium
+    schema_stable: volatile
+    category: system
+    notes: "May contain compressed PLSQL or other power log formats"
+
+  - name: "Powerlog Quarantine"
+    path: "private/var/db/powerlog/Library/BatteryLife/Quarantine/*"
+    glob_pattern: "**/powerlog/Library/BatteryLife/Quarantine/*"
+    description: "Quarantined power log files"
+    versions: ["10.9+"]
+    priority: low
+    schema_stable: volatile
+    category: system
+    notes: "Unknown format - collect if present for forensic completeness"
+
 unified_logs:
   - name: "Unified Log (Persist)"
     path: "private/var/db/diagnostics/Persist/*.tracev3"
@@ -393,6 +433,122 @@ unified_logs:
     schema_stable: volatile
     category: logs
 
+  - name: "Unified Log (All Diagnostics)"
+    path: "private/var/db/diagnostics/*"
+    glob_pattern: "**/diagnostics/*"
+    description: "All unified logging system files including metadata"
+    versions: ["10.12+"]
+    priority: high
+    schema_stable: volatile
+    category: logs
+    notes: "Captures all diagnostic files beyond just tracev3"
+
+shell_history:
+  - name: "Bash History"
+    path: "Users/*/.bash_history"
+    glob_pattern: "Users/*/.bash_history"
+    description: "Bash shell command history"
+    versions: ["all"]
+    priority: high
+    schema_stable: null
+    category: user_activity
+    notes: "Plain text file - contains user command history"
+
+  - name: "Zsh History"
+    path: "Users/*/.zsh_history"
+    glob_pattern: "Users/*/.zsh_history"
+    description: "Zsh shell command history"
+    versions: ["10.15+"]
+    priority: high
+    schema_stable: null
+    category: user_activity
+    notes: "Plain text file - Zsh became default shell in Catalina (10.15)"
+
+legacy_logs:
+  - name: "System Log"
+    path: "private/var/log/system.log"
+    glob_pattern: "**/var/log/system.log"
+    description: "Legacy system log file"
+    versions: ["pre-10.12"]
+    priority: high
+    schema_stable: stable
+    category: logs
+    notes: "Deprecated in favor of unified logging in 10.12+, but may still exist"
+
+  - name: "System Log Archives"
+    path: "private/var/log/system.log.*.gz"
+    glob_pattern: "**/var/log/system.log.*.gz"
+    description: "Compressed archived system logs"
+    versions: ["pre-10.12"]
+    priority: medium
+    schema_stable: stable
+    category: logs
+    notes: "Rotated and compressed system logs"
+
+  - name: "Install Log"
+    path: "private/var/log/install.log"
+    glob_pattern: "**/var/log/install.log"
+    description: "Software installation log"
+    versions: ["all"]
+    priority: high
+    schema_stable: stable
+    category: logs
+    notes: "Records software installations and updates"
+
+  - name: "Apple System Log (ASL)"
+    path: "private/var/log/asl/*.asl"
+    glob_pattern: "**/var/log/asl/*.asl"
+    description: "Apple System Log database files"
+    versions: ["10.4-10.11"]
+    priority: high
+    schema_stable: stable
+    category: logs
+    notes: "Custom binary format starting with 'ASL DB' - deprecated after 10.11"
+
+  - name: "Diagnostic Messages ASL"
+    path: "private/var/log/DiagnosticMessages/*.asl"
+    glob_pattern: "**/DiagnosticMessages/*.asl"
+    description: "Diagnostic message ASL files"
+    versions: ["10.4-10.11"]
+    priority: medium
+    schema_stable: stable
+    category: logs
+    notes: "Part of legacy ASL system"
+
+  - name: "Power Management ASL"
+    path: "private/var/powermanagement/*.asl"
+    glob_pattern: "**/powermanagement/*.asl"
+    description: "Power management event logs in ASL format"
+    versions: ["10.4-10.11"]
+    priority: medium
+    schema_stable: stable
+    category: logs
+    notes: "Tracks power events, sleep/wake cycles"
+
+auth:
+  - name: "Authentication Database"
+    path: "private/var/db/auth.db"
+    glob_pattern: "**/var/db/auth.db"
+    description: "System authentication and authorization database"
+    tables: ["rules", "rights"]
+    versions: ["10.9+"]
+    priority: critical
+    schema_stable: moderate
+    category: security
+    notes: "Contains authorization rules and rights for system operations"
+
+network:
+  - name: "Network Usage Database"
+    path: "private/var/networkd/netusage.sqlite"
+    glob_pattern: "**/networkd/netusage.sqlite"
+    description: "Network data usage tracking by process"
+    tables: ["ZPROCESS", "ZLIVEUSAGE"]
+    versions: ["10.13+"]
+    priority: high
+    schema_stable: moderate
+    category: network
+    notes: "Tracks data usage per application and process"
+
 wifi:
   - name: "WiFi Known Networks"
     path: "Library/Preferences/SystemConfiguration/com.apple.wifi.message-tracer.plist"
@@ -402,6 +558,26 @@ wifi:
     schema_stable: stable
     category: network
     notes: "Plist format, not SQLite"
+
+  - name: "WiFi Log"
+    path: "private/var/log/wifi.log"
+    glob_pattern: "**/var/log/wifi.log"
+    description: "Current WiFi connection and diagnostic log"
+    versions: ["all"]
+    priority: high
+    schema_stable: stable
+    category: network
+    notes: "Plain text log file with WiFi events"
+
+  - name: "WiFi Log Archives"
+    path: "private/var/log/wifi.log.*.bz2"
+    glob_pattern: "**/var/log/wifi.log.*.bz2"
+    description: "Compressed archived WiFi logs"
+    versions: ["all"]
+    priority: medium
+    schema_stable: stable
+    category: network
+    notes: "Rotated and compressed WiFi logs, numbered sequentially"
 
   - name: "WiFi Analytics"
     path: "private/var/db/analyticsd/Analytics-Journal-*.ips"
@@ -443,6 +619,27 @@ biome:
     schema_stable: volatile
     category: system
     notes: "Binary segmented store format - requires specialized parsing"
+
+keychains:
+  - name: "User Keychains"
+    path: "Users/*/Library/Keychains/*.keychain-db"
+    glob_pattern: "**/Library/Keychains/*.keychain-db"
+    description: "User keychain databases containing encrypted credentials"
+    versions: ["10.9+"]
+    priority: high
+    schema_stable: moderate
+    category: security
+    notes: "ENCRYPTED - Contains passwords, certificates, keys. SQLite format but data is encrypted. Requires authorization and decryption keys for access."
+
+  - name: "System Keychain"
+    path: "Library/Keychains/System.keychain"
+    glob_pattern: "**/Library/Keychains/System.keychain"
+    description: "System-level keychain with root certificates and system credentials"
+    versions: ["all"]
+    priority: medium
+    schema_stable: stable
+    category: security
+    notes: "ENCRYPTED - System keychain. Older format than .keychain-db"
 
 # ============================================================================
 # THIRD-PARTY APPLICATIONS
