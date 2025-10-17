@@ -1,0 +1,503 @@
+# Mac Log Sleuth Database Catalog
+# Comprehensive catalog of macOS system and application databases for forensic analysis
+# Version: 2.0
+
+# Priority levels:
+#   critical: Essential system databases, should always be collected
+#   high: Important for most investigations
+#   medium: Useful for specific investigation types
+#   low: Supplementary data
+
+# Schema stability:
+#   stable: Schema rarely changes across versions
+#   moderate: Schema may change with major OS updates
+#   volatile: Schema changes frequently
+
+---
+# ============================================================================
+# BROWSERS - Top 3 (Safari, Chrome, Firefox)
+# ============================================================================
+
+safari:
+  - name: "Safari History"
+    path: "Users/*/Library/Safari/History.db"
+    glob_pattern: "**/Library/Safari/History.db"
+    description: "Safari browsing history with visits and items"
+    tables: ["history_visits", "history_items", "history_tombstones"]
+    versions: ["10.7+"]
+    priority: high
+    schema_stable: stable
+    category: browser
+    application: safari
+    notes: "Primary Safari history database with URL visits and metadata"
+
+  - name: "Safari Favicon Cache"
+    path: "Users/*/Library/Safari/Favicon Cache/favicons.db"
+    glob_pattern: "**/Library/Safari/Favicon Cache/favicons.db"
+    description: "Safari favicon metadata and images"
+    tables: ["page_url", "icon_info"]
+    versions: ["10.7+"]
+    priority: medium
+    schema_stable: moderate
+    category: browser
+    application: safari
+    notes: "Contains favicon data associated with visited sites"
+
+  - name: "Safari Per-Site Preferences"
+    path: "Users/*/Library/Safari/PerSitePreferences.db"
+    glob_pattern: "**/Library/Safari/PerSitePreferences.db"
+    description: "Site-specific Safari settings and preferences"
+    versions: ["10.13+"]
+    priority: medium
+    schema_stable: moderate
+    category: browser
+    application: safari
+
+  - name: "Safari Tab Snapshots Metadata"
+    path: "Users/*/Library/Safari/Caches/com.apple.Safari/TabSnapshots/metadata.db"
+    glob_pattern: "**/Safari/Caches/com.apple.Safari/TabSnapshots/metadata.db"
+    description: "Metadata for Safari tab snapshot thumbnails"
+    versions: ["10.12+"]
+    priority: low
+    schema_stable: moderate
+    category: browser
+    application: safari
+
+chrome:
+  - name: "Chrome History"
+    path: "Users/*/Library/Application Support/Google/Chrome/Default/History"
+    glob_pattern: "**/Google/Chrome/*/History"
+    description: "Chrome browsing history, downloads, and search terms"
+    tables: ["urls", "visits", "downloads", "keyword_search_terms"]
+    versions: ["all"]
+    priority: high
+    schema_stable: moderate
+    category: browser
+    application: chrome
+    notes: "Primary Chrome history database - also check other profiles (Profile 1, Profile 2, etc.)"
+
+  - name: "Chrome Login Data"
+    path: "Users/*/Library/Application Support/Google/Chrome/Default/Login Data"
+    glob_pattern: "**/Google/Chrome/*/Login Data"
+    description: "Chrome saved login credentials (encrypted)"
+    tables: ["logins"]
+    versions: ["all"]
+    priority: high
+    schema_stable: stable
+    category: browser
+    application: chrome
+    notes: "Contains encrypted passwords - requires decryption key from Keychain"
+
+  - name: "Chrome Web Data"
+    path: "Users/*/Library/Application Support/Google/Chrome/Default/Web Data"
+    glob_pattern: "**/Google/Chrome/*/Web Data"
+    description: "Chrome autofill data and form history"
+    tables: ["autofill", "autofill_profiles", "credit_cards"]
+    versions: ["all"]
+    priority: medium
+    schema_stable: moderate
+    category: browser
+    application: chrome
+
+  - name: "Chrome Cookies"
+    path: "Users/*/Library/Application Support/Google/Chrome/Default/Network/Cookies"
+    glob_pattern: "**/Google/Chrome/*/Network/Cookies"
+    description: "Chrome cookies database"
+    tables: ["cookies"]
+    versions: ["all"]
+    priority: medium
+    schema_stable: moderate
+    category: browser
+    application: chrome
+
+  - name: "Chrome Favicons"
+    path: "Users/*/Library/Application Support/Google/Chrome/Default/Favicons"
+    glob_pattern: "**/Google/Chrome/*/Favicons"
+    description: "Chrome favicon cache"
+    tables: ["favicons", "favicon_bitmaps", "icon_mapping"]
+    versions: ["all"]
+    priority: low
+    schema_stable: moderate
+    category: browser
+    application: chrome
+
+  - name: "Chrome Top Sites"
+    path: "Users/*/Library/Application Support/Google/Chrome/Default/Top Sites"
+    glob_pattern: "**/Google/Chrome/*/Top Sites"
+    description: "Chrome top sites and thumbnails"
+    tables: ["top_sites", "thumbnails"]
+    versions: ["all"]
+    priority: low
+    schema_stable: moderate
+    category: browser
+    application: chrome
+
+  - name: "Chromium Edge History"
+    path: "Users/*/Library/Application Support/Microsoft Edge/Default/History"
+    glob_pattern: "**/Microsoft Edge/*/History"
+    description: "Microsoft Edge (Chromium) browsing history"
+    tables: ["urls", "visits", "downloads", "keyword_search_terms"]
+    versions: ["79+"]
+    priority: high
+    schema_stable: moderate
+    category: browser
+    application: edge
+    notes: "Edge uses Chromium engine - same schema as Chrome"
+
+firefox:
+  - name: "Firefox Places"
+    path: "Users/*/Library/Application Support/Firefox/Profiles/*/places.sqlite"
+    glob_pattern: "**/Firefox/Profiles/*/places.sqlite"
+    description: "Firefox bookmarks, downloads, and browsing history"
+    tables: ["moz_places", "moz_historyvisits", "moz_bookmarks", "moz_annos"]
+    versions: ["3.0+"]
+    priority: high
+    schema_stable: moderate
+    category: browser
+    application: firefox
+    notes: "Unified database for history and bookmarks - critical for Firefox forensics"
+
+  - name: "Firefox Cookies"
+    path: "Users/*/Library/Application Support/Firefox/Profiles/*/cookies.sqlite"
+    glob_pattern: "**/Firefox/Profiles/*/cookies.sqlite"
+    description: "Firefox cookies"
+    tables: ["moz_cookies"]
+    versions: ["3.0+"]
+    priority: medium
+    schema_stable: stable
+    category: browser
+    application: firefox
+
+  - name: "Firefox Favicons"
+    path: "Users/*/Library/Application Support/Firefox/Profiles/*/favicons.sqlite"
+    glob_pattern: "**/Firefox/Profiles/*/favicons.sqlite"
+    description: "Firefox favicon data"
+    tables: ["moz_icons", "moz_pages_w_icons"]
+    versions: ["55+"]
+    priority: low
+    schema_stable: moderate
+    category: browser
+    application: firefox
+    notes: "Older versions used different favicon storage methods"
+
+  - name: "Firefox Form History"
+    path: "Users/*/Library/Application Support/Firefox/Profiles/*/formhistory.sqlite"
+    glob_pattern: "**/Firefox/Profiles/*/formhistory.sqlite"
+    description: "Firefox form autofill history"
+    tables: ["moz_formhistory"]
+    versions: ["3.0+"]
+    priority: medium
+    schema_stable: stable
+    category: browser
+    application: firefox
+
+# ============================================================================
+# macOS SYSTEM DATABASES
+# ============================================================================
+
+tcc:
+  - name: "TCC Database (System)"
+    path: "Library/Application Support/com.apple.TCC/TCC.db"
+    glob_pattern: "**/com.apple.TCC/TCC.db"
+    description: "Transparency, Consent, and Control - system-wide permissions"
+    tables: ["access", "admin"]
+    versions: ["10.9+"]
+    priority: critical
+    schema_stable: moderate
+    category: security
+    notes: "Tracks app permissions (camera, microphone, location, etc.)"
+
+  - name: "TCC Database (User)"
+    path: "Users/*/Library/Application Support/com.apple.TCC/TCC.db"
+    glob_pattern: "Users/*/Library/Application Support/com.apple.TCC/TCC.db"
+    description: "Transparency, Consent, and Control - user-specific permissions"
+    tables: ["access", "admin"]
+    versions: ["10.9+"]
+    priority: critical
+    schema_stable: moderate
+    category: security
+    notes: "User-level app permissions"
+
+messages:
+  - name: "iMessage/SMS Database"
+    path: "Users/*/Library/Messages/chat.db"
+    glob_pattern: "**/Messages/chat.db"
+    description: "iMessage and SMS message history"
+    tables: ["message", "chat", "handle", "attachment", "chat_message_join"]
+    versions: ["10.8+"]
+    priority: critical
+    schema_stable: moderate
+    category: communication
+    notes: "Contains all Messages app data including iMessage and SMS"
+
+  - name: "Messages Attachments"
+    path: "Users/*/Library/Messages/Attachments/*/*"
+    glob_pattern: "**/Messages/Attachments/*/*"
+    description: "iMessage attachment files"
+    versions: ["10.8+"]
+    priority: high
+    schema_stable: null
+    category: communication
+    notes: "Not a database - file storage for message attachments"
+
+notifications:
+  - name: "Notification Center Database"
+    path: "Users/*/Library/Application Support/NotificationCenter/*.db"
+    glob_pattern: "**/NotificationCenter/*.db"
+    description: "Notification Center history and settings"
+    versions: ["10.8+"]
+    priority: medium
+    schema_stable: volatile
+    category: system
+    notes: "Schema varies by macOS version"
+
+knowledge:
+  - name: "Knowledge Store (CoreDuet)"
+    path: "Users/*/Library/Application Support/Knowledge/knowledgeC.db"
+    glob_pattern: "**/Knowledge/knowledgeC.db"
+    description: "CoreDuet knowledge database - tracks app usage, device connections, metadata"
+    tables: ["ZOBJECT", "ZSOURCE", "ZSTRUCTUREDMETADATA"]
+    versions: ["10.13+"]
+    priority: critical
+    schema_stable: moderate
+    category: system
+    notes: "Rich forensic artifact - app launches, screen time, device connections, air drops"
+
+  - name: "Knowledge Store Interactions"
+    path: "Users/*/Library/Application Support/Knowledge/interactions.db"
+    glob_pattern: "**/Knowledge/interactions.db"
+    description: "User interaction history tracked by CoreDuet"
+    versions: ["10.15+"]
+    priority: high
+    schema_stable: moderate
+    category: system
+
+calendar:
+  - name: "Calendar Cache"
+    path: "Users/*/Library/Calendars/Calendar Cache"
+    glob_pattern: "**/Calendars/Calendar Cache"
+    description: "Calendar app event cache"
+    tables: ["ZCALENDARITEM", "ZATTACHMENT", "ZPARTICIPANT"]
+    versions: ["10.8+"]
+    priority: high
+    schema_stable: moderate
+    category: productivity
+
+contacts:
+  - name: "Contacts Database"
+    path: "Users/*/Library/Application Support/AddressBook/AddressBook-v22.abcddb"
+    glob_pattern: "**/AddressBook/*.abcddb"
+    description: "Contacts app database"
+    versions: ["10.7+"]
+    priority: high
+    schema_stable: moderate
+    category: productivity
+    notes: "Version number in filename varies by macOS version"
+
+mail:
+  - name: "Mail Envelope Index"
+    path: "Users/*/Library/Mail/V*/MailData/Envelope Index"
+    glob_pattern: "**/Mail/V*/MailData/Envelope Index"
+    description: "Mail app message index and metadata"
+    tables: ["messages", "subjects", "addresses"]
+    versions: ["10.7+"]
+    priority: critical
+    schema_stable: moderate
+    category: communication
+    notes: "V10, V9, etc. varies by macOS version"
+
+notes:
+  - name: "Notes Database"
+    path: "Users/*/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+    glob_pattern: "**/group.com.apple.notes/NoteStore.sqlite"
+    description: "Apple Notes app database"
+    tables: ["ZICCLOUDSYNCINGOBJECT", "ZICNOTEDATA"]
+    versions: ["10.11+"]
+    priority: high
+    schema_stable: moderate
+    category: productivity
+    notes: "Core Data SQLite database - complex schema"
+
+reminders:
+  - name: "Reminders Database"
+    path: "Users/*/Library/Reminders/Container_v1/Stores/*.sqlite"
+    glob_pattern: "**/Reminders/Container_v1/Stores/*.sqlite"
+    description: "Reminders app database"
+    versions: ["10.8+"]
+    priority: medium
+    schema_stable: moderate
+    category: productivity
+
+spotlight:
+  - name: "Spotlight Index (User)"
+    path: "Users/*/Library/Metadata/CoreSpotlight/index.spotlightV3"
+    glob_pattern: "**/Metadata/CoreSpotlight/index.spotlightV3"
+    description: "Spotlight search index database"
+    versions: ["10.11+"]
+    priority: medium
+    schema_stable: volatile
+    category: system
+    notes: "Complex binary format - not standard SQLite"
+
+quarantine:
+  - name: "Quarantine Events"
+    path: "Users/*/Library/Preferences/com.apple.LaunchServices.QuarantineEventsV2"
+    glob_pattern: "**/com.apple.LaunchServices.QuarantineEventsV2"
+    description: "Quarantine attribute tracking for downloaded files"
+    tables: ["LSQuarantineEvent"]
+    versions: ["10.7+"]
+    priority: high
+    schema_stable: stable
+    category: security
+    notes: "Tracks file downloads and their sources"
+
+recent_items:
+  - name: "Recent Items"
+    path: "Users/*/Library/Application Support/com.apple.sharedfilelist/*.sfl2"
+    glob_pattern: "**/com.apple.sharedfilelist/*.sfl2"
+    description: "Recent items lists (files, servers, applications)"
+    versions: ["10.11+"]
+    priority: medium
+    schema_stable: moderate
+    category: system
+    notes: "Binary plist format in recent versions, SQLite in older versions"
+
+powerlog:
+  - name: "Powerlog Database"
+    path: "private/var/log/powerlogs/*.PLSQL"
+    glob_pattern: "**/powerlogs/*.PLSQL"
+    description: "Power and battery usage logging"
+    versions: ["10.9+"]
+    priority: medium
+    schema_stable: volatile
+    category: system
+    notes: "Custom extension .PLSQL - contains detailed power metrics"
+
+unified_logs:
+  - name: "Unified Log (Persist)"
+    path: "private/var/db/diagnostics/Persist/*.tracev3"
+    glob_pattern: "**/diagnostics/Persist/*.tracev3"
+    description: "Unified logging system - persistent storage"
+    versions: ["10.12+"]
+    priority: high
+    schema_stable: volatile
+    category: logs
+    notes: "Binary format - requires 'log show' or specialized parsers"
+
+  - name: "Unified Log (Special)"
+    path: "private/var/db/diagnostics/Special/*.tracev3"
+    glob_pattern: "**/diagnostics/Special/*.tracev3"
+    description: "Unified logging system - special events"
+    versions: ["10.12+"]
+    priority: medium
+    schema_stable: volatile
+    category: logs
+
+wifi:
+  - name: "WiFi Known Networks"
+    path: "Library/Preferences/SystemConfiguration/com.apple.wifi.message-tracer.plist"
+    description: "WiFi network connection history"
+    versions: ["10.7+"]
+    priority: medium
+    schema_stable: stable
+    category: network
+    notes: "Plist format, not SQLite"
+
+  - name: "WiFi Analytics"
+    path: "private/var/db/analyticsd/Analytics-Journal-*.ips"
+    glob_pattern: "**/analyticsd/Analytics-Journal-*.ips"
+    description: "WiFi analytics and diagnostics"
+    versions: ["10.12+"]
+    priority: low
+    schema_stable: volatile
+    category: network
+    notes: "IPS format - crash/diagnostic reports"
+
+airdrop:
+  - name: "AirDrop Database"
+    path: "Users/*/Library/Application Support/com.apple.sharingd/com.apple.sharingd.db"
+    glob_pattern: "**/com.apple.sharingd/com.apple.sharingd.db"
+    description: "AirDrop transfer history"
+    versions: ["10.10+"]
+    priority: high
+    schema_stable: moderate
+    category: sharing
+
+screen_time:
+  - name: "Screen Time Application Usage"
+    path: "Users/*/Library/Application Support/com.apple.ScreenTimeAgent/Store/RMAdminStore-Local.sqlite"
+    glob_pattern: "**/ScreenTimeAgent/Store/RMAdminStore-Local.sqlite"
+    description: "Screen Time app usage tracking"
+    versions: ["10.15+"]
+    priority: medium
+    schema_stable: moderate
+    category: system
+
+biome:
+  - name: "Biome Streams"
+    path: "Users/*/Library/BiomeStreams/*/local/*.segmentedstore"
+    glob_pattern: "**/BiomeStreams/*/local/*.segmentedstore"
+    description: "Biome unified logging framework data"
+    versions: ["12.0+"]
+    priority: medium
+    schema_stable: volatile
+    category: system
+    notes: "Binary segmented store format - requires specialized parsing"
+
+# ============================================================================
+# THIRD-PARTY APPLICATIONS
+# ============================================================================
+
+slack:
+  - name: "Slack Storage"
+    path: "Users/*/Library/Application Support/Slack/storage/slack-*.db"
+    glob_pattern: "**/Slack/storage/slack-*.db"
+    description: "Slack desktop app local database"
+    versions: ["all"]
+    priority: medium
+    schema_stable: moderate
+    category: communication
+    application: slack
+
+zoom:
+  - name: "Zoom Chat Database"
+    path: "Users/*/Library/Application Support/zoom.us/data/zTelephony.db"
+    glob_pattern: "**/zoom.us/data/zTelephony.db"
+    description: "Zoom chat messages and call history"
+    versions: ["all"]
+    priority: medium
+    schema_stable: moderate
+    category: communication
+    application: zoom
+
+discord:
+  - name: "Discord Local Storage"
+    path: "Users/*/Library/Application Support/discord/Local Storage/leveldb"
+    glob_pattern: "**/discord/Local Storage/leveldb"
+    description: "Discord local data storage"
+    versions: ["all"]
+    priority: medium
+    schema_stable: volatile
+    category: communication
+    application: discord
+    notes: "LevelDB format, not SQLite"
+
+# ============================================================================
+# METADATA
+# ============================================================================
+catalog_metadata:
+  version: "2.0"
+  created: "2025-01-16"
+  updated: "2025-01-16"
+  total_databases: 50+
+  coverage:
+    - browsers: ["Safari", "Chrome/Chromium", "Firefox", "Edge"]
+    - system: ["TCC", "Messages", "Knowledge", "Notifications", "Unified Logs"]
+    - productivity: ["Calendar", "Contacts", "Mail", "Notes", "Reminders"]
+    - security: ["TCC", "Quarantine", "Screen Time"]
+    - network: ["WiFi", "AirDrop"]
+    - third_party: ["Slack", "Zoom", "Discord"]
+  notes: |
+    This catalog provides standardized paths and metadata for common macOS databases.
+    Paths with wildcards (*) require glob pattern matching.
+    Not all databases use SQLite format - some use plist, binary, or custom formats.

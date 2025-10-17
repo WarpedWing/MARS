@@ -1,0 +1,248 @@
+# macOS System Database Catalog
+# Paths relative to system root (/)
+#
+# Format:
+#   category:
+#     - name: Human-readable name
+#       path: Path relative to root (supports glob patterns)
+#       description: What this database contains
+#       versions: macOS versions where this exists
+#       priority: high/medium/low (for processing order)
+#       schema_stable: true/false (whether schema changes between versions)
+
+system_logs:
+  - name: "Unified Log (Persist)"
+    path: "private/var/db/diagnostics/Persist/*.tracev3"
+    description: "Unified logging system - persistent storage"
+    versions: ["10.12+"]
+    priority: high
+    schema_stable: false
+
+  - name: "Unified Log (Special)"
+    path: "private/var/db/diagnostics/Special/*.tracev3"
+    description: "Unified logging system - special events"
+    versions: ["10.12+"]
+    priority: high
+    schema_stable: false
+
+  - name: "Unified Log (Signpost)"
+    path: "private/var/db/diagnostics/Signpost/*.tracev3"
+    description: "Unified logging system - performance signposts"
+    versions: ["10.12+"]
+    priority: medium
+    schema_stable: false
+
+  - name: "System Log Archive"
+    path: "private/var/db/diagnostics/**.logarchive"
+    description: "Archived unified logs"
+    versions: ["10.12+"]
+    priority: high
+    schema_stable: false
+
+  - name: "Install History"
+    path: "Library/Receipts/InstallHistory.plist"
+    description: "Software installation history"
+    versions: ["10.4+"]
+    priority: high
+    schema_stable: true
+
+network:
+  - name: "WiFi Known Networks"
+    path: "Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist"
+    description: "Known WiFi networks"
+    versions: ["10.7+"]
+    priority: high
+    schema_stable: true
+
+  - name: "Network Interfaces"
+    path: "Library/Preferences/SystemConfiguration/NetworkInterfaces.plist"
+    description: "Network interface configuration"
+    versions: ["10.4+"]
+    priority: medium
+    schema_stable: true
+
+spotlight:
+  - name: "Spotlight Store"
+    path: "private/var/db/.Spotlight-V100/Store-V2/*/store.db"
+    description: "Spotlight search index database"
+    versions: ["10.9+"]
+    priority: high
+    schema_stable: false
+
+  - name: "Spotlight Shortcuts"
+    path: "private/var/db/.Spotlight-V100/Store-V2/*/Shortcuts.db"
+    description: "Spotlight keyboard shortcuts"
+    versions: ["10.9+"]
+    priority: medium
+    schema_stable: false
+
+tcc:
+  - name: "TCC Database (System)"
+    path: "Library/Application Support/com.apple.TCC/TCC.db"
+    description: "Transparency, Consent, and Control - system permissions"
+    versions: ["10.9+"]
+    priority: high
+    schema_stable: true
+
+  - name: "TCC Database (User)"
+    path: "Users/*/Library/Application Support/com.apple.TCC/TCC.db"
+    description: "Transparency, Consent, and Control - user permissions"
+    versions: ["10.9+"]
+    priority: high
+    schema_stable: true
+
+notifications:
+  - name: "Notification Center"
+    path: "Users/*/Library/Application Support/NotificationCenter/*.db"
+    description: "Notification Center database"
+    versions: ["10.8+"]
+    priority: medium
+    schema_stable: false
+
+lsquarantine:
+  - name: "Quarantine Events"
+    path: "Users/*/Library/Preferences/com.apple.LaunchServices.QuarantineEventsV2"
+    description: "File quarantine and download history"
+    versions: ["10.5+"]
+    priority: high
+    schema_stable: true
+
+knowledgeC:
+  - name: "Knowledge Store"
+    path: "private/var/db/CoreDuet/Knowledge/knowledgeC.db"
+    description: "System activity and app usage tracking"
+    versions: ["10.13+"]
+    priority: high
+    schema_stable: false
+
+biome:
+  - name: "Biome Streams"
+    path: "private/var/db/biome/**/*.db"
+    description: "Biome event streams (iOS/macOS behavior tracking)"
+    versions: ["10.15+"]
+    priority: high
+    schema_stable: false
+
+safari:
+  - name: "Safari History"
+    path: "Users/*/Library/Safari/History.db"
+    description: "Safari browsing history"
+    versions: ["10.7+"]
+    priority: high
+    schema_stable: true
+
+  - name: "Safari Downloads"
+    path: "Users/*/Library/Safari/Downloads.plist"
+    description: "Safari download history"
+    versions: ["10.7+"]
+    priority: high
+    schema_stable: true
+
+  - name: "Safari Local Storage"
+    path: "Users/*/Library/Safari/LocalStorage/*.localstorage"
+    description: "Safari HTML5 local storage"
+    versions: ["10.7+"]
+    priority: medium
+    schema_stable: false
+
+chrome:
+  - name: "Chrome History"
+    path: "Users/*/Library/Application Support/Google/Chrome/*/History"
+    description: "Chrome browsing history"
+    versions: ["all"]
+    priority: high
+    schema_stable: true
+
+  - name: "Chrome Cookies"
+    path: "Users/*/Library/Application Support/Google/Chrome/*/Cookies"
+    description: "Chrome cookies database"
+    versions: ["all"]
+    priority: medium
+    schema_stable: true
+
+  - name: "Chrome Downloads"
+    path: "Users/*/Library/Application Support/Google/Chrome/*/History"
+    description: "Chrome download history (in History db)"
+    versions: ["all"]
+    priority: high
+    schema_stable: true
+
+firefox:
+  - name: "Firefox Places"
+    path: "Users/*/Library/Application Support/Firefox/Profiles/*/places.sqlite"
+    description: "Firefox history, bookmarks, and downloads"
+    versions: ["all"]
+    priority: high
+    schema_stable: true
+
+  - name: "Firefox Cookies"
+    path: "Users/*/Library/Application Support/Firefox/Profiles/*/cookies.sqlite"
+    description: "Firefox cookies database"
+    versions: ["all"]
+    priority: medium
+    schema_stable: true
+
+imessage:
+  - name: "iMessage Chat Database"
+    path: "Users/*/Library/Messages/chat.db"
+    description: "iMessage and SMS messages"
+    versions: ["10.8+"]
+    priority: high
+    schema_stable: false
+
+  - name: "iMessage Attachments"
+    path: "Users/*/Library/Messages/Attachments/**/*"
+    description: "iMessage attachment files"
+    versions: ["10.8+"]
+    priority: medium
+    schema_stable: false
+
+notes:
+  - name: "Apple Notes"
+    path: "Users/*/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+    description: "Apple Notes application database"
+    versions: ["10.11+"]
+    priority: high
+    schema_stable: false
+
+calendar:
+  - name: "Calendar Cache"
+    path: "Users/*/Library/Calendars/Calendar Cache"
+    description: "Calendar application cache"
+    versions: ["10.8+"]
+    priority: medium
+    schema_stable: false
+
+mail:
+  - name: "Mail Envelope Index"
+    path: "Users/*/Library/Mail/V*/MailData/Envelope Index"
+    description: "Mail application envelope index"
+    versions: ["10.7+"]
+    priority: high
+    schema_stable: false
+
+asl:
+  - name: "Apple System Log (Legacy)"
+    path: "private/var/log/asl/*.asl"
+    description: "Legacy Apple System Log files"
+    versions: ["10.4-10.11"]
+    priority: medium
+    schema_stable: true
+
+powerlog:
+  - name: "Power Management Log"
+    path: "private/var/db/powerlog/*.powerlog"
+    description: "Power management events and battery data"
+    versions: ["10.9+"]
+    priority: low
+    schema_stable: false
+
+fsevents:
+  - name: "File System Events"
+    path: ".fseventsd/**/*"
+    description: "File system change events"
+    versions: ["10.5+"]
+    priority: medium
+    schema_stable: false
+
+# Add more categories as needed...

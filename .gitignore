@@ -48,3 +48,8 @@ coverage.xml
 #Device database schemas and rubrics
 *.json
 *.csv
+
+#Test data
+*test_output*
+kb_extracted_databases/*
+kb_laptop_scan/*
