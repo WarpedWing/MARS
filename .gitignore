@@ -49,14 +49,32 @@ coverage.xml
 *.json
 *.csv
 
-#Test data
+# Test data and case files
 *test_output*
-kb_extracted_databases/*
-kb_laptop_scan/*
+kb_extracted_databases/
+kb_laptop_scan/
+kb_analysis_output/
+kb_windows_scan/
+kb_photorec_test/
+MacLogSleuth_Output/
+Carved/
+Parsed/
+recovered/
+
+# Session files (PhotoRec, TestDisk, etc.)
 *.ses
 *.se2
-*.se*
-photorec.se2
-photorec.ses
+*.se3
+photorec.ses*
+photorec.se*
+
+# Temporary scripts and notes
 CLEANUP_E01.sh
 NEXT_SESSION.md
+PIPELINE_DESIGN.md
+
+# Large test files
+*.PLSQL
+*.plsql
+*.tracev3
+*.asl
