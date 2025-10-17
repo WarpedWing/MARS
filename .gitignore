@@ -58,3 +58,5 @@ kb_laptop_scan/*
 *.se*
 photorec.se2
 photorec.ses
+CLEANUP_E01.sh
+NEXT_SESSION.md
