@@ -29,14 +29,19 @@ import argparse
 import bz2
 import gzip
 import hashlib
+import heapq
 import json
+import re
 import shutil
 import sqlite3
+import subprocess
 import sys
+import tempfile
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 # Try to import fingerprinter
 try:
@@ -115,6 +120,105 @@ class RecoveredFile:
 
 
 # ============================================================================
+# Timestamp Parsing & Log Line Sorting
+# ============================================================================
+
+
+@dataclass
+class LogLine:
+    """A single log line with parsed timestamp."""
+    timestamp: datetime
+    original_line: str
+    source_file: str
+    line_number: int
+
+    def __lt__(self, other):
+        """Enable sorting by timestamp."""
+        return self.timestamp < other.timestamp
+
+
+class TimestampParser:
+    """Parse timestamps from various macOS log formats."""
+
+    # WiFi log: Thu Jul 23 00:48:51.636 <airportd[128]>
+    WIFI_PATTERN = re.compile(
+        r'^(?P<dow>[A-Z][a-z]{2})\s+'
+        r'(?P<mon>[A-Z][a-z]{2})\s+'
+        r'(?P<day>\d{1,2})\s+'
+        r'(?P<time>\d{2}:\d{2}:\d{2}\.\d{3})\s*'
+    )
+
+    # System/Install log: Nov 23 17:45:15 hostname process[pid]:
+    SYSLOG_PATTERN = re.compile(
+        r'^(?P<mon>[A-Z][a-z]{2})\s+'
+        r'(?P<day>\d{1,2})\s+'
+        r'(?P<time>\d{2}:\d{2}:\d{2})\s+'
+    )
+
+    MONTH_MAP = {
+        'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+    }
+
+    @classmethod
+    def parse_wifi_timestamp(cls, line: str, current_year: int = None) -> datetime | None:
+        """Parse WiFi log timestamp."""
+        match = cls.WIFI_PATTERN.match(line)
+        if not match:
+            return None
+
+        try:
+            month = cls.MONTH_MAP[match.group('mon')]
+            day = int(match.group('day'))
+            time_str = match.group('time')
+            hour, minute, sec_ms = time_str.split(':')
+            sec, ms = sec_ms.split('.')
+
+            # Use current year if not specified
+            year = current_year or datetime.now().year
+
+            return datetime(
+                year, month, day,
+                int(hour), int(minute), int(sec), int(ms) * 1000,
+                tzinfo=UTC
+            )
+        except Exception:
+            return None
+
+    @classmethod
+    def parse_syslog_timestamp(cls, line: str, current_year: int = None) -> datetime | None:
+        """Parse system/install log timestamp."""
+        match = cls.SYSLOG_PATTERN.match(line)
+        if not match:
+            return None
+
+        try:
+            month = cls.MONTH_MAP[match.group('mon')]
+            day = int(match.group('day'))
+            time_str = match.group('time')
+            hour, minute, sec = time_str.split(':')
+
+            year = current_year or datetime.now().year
+
+            return datetime(
+                year, month, day,
+                int(hour), int(minute), int(sec),
+                tzinfo=UTC
+            )
+        except Exception:
+            return None
+
+    @classmethod
+    def parse_line(cls, line: str, log_type: LogType, current_year: int = None) -> datetime | None:
+        """Parse timestamp from line based on log type."""
+        if log_type == LogType.WIFI_LOG:
+            return cls.parse_wifi_timestamp(line, current_year)
+        elif log_type in (LogType.SYSTEM_LOG, LogType.INSTALL_LOG):
+            return cls.parse_syslog_timestamp(line, current_year)
+        return None
+
+
+# ============================================================================
 # PhotoRec Processor
 # ============================================================================
 
@@ -147,6 +251,10 @@ class PhotoRecProcessor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir = self.output_dir / "_temp"
         self.temp_dir.mkdir(exist_ok=True)
+        self.corrupted_dir = self.output_dir / "corrupted_archives"
+        self.corrupted_dir.mkdir(exist_ok=True)
+        self.decompressed_dir = self.output_dir / "decompressed"
+        self.decompressed_dir.mkdir(exist_ok=True)
 
         # Buffers for grouping files by type
         self.text_logs: dict[LogType, list[RecoveredFile]] = defaultdict(list)
@@ -197,27 +305,44 @@ class PhotoRecProcessor:
         """
         Find all files in PhotoRec output directories.
 
+        Supports two organizational schemes:
+        1. Type-organized (after PhotoRec refinery): sqlite/, gz/, bz2/, etc.
+        2. Raw PhotoRec output: recup_dir.1/, recup_dir.2/, etc.
+
         Returns:
             List of file paths to process
         """
         files = []
 
-        # Look for recup_dir.* folders
-        recup_dirs = sorted(self.photorec_dir.glob("recup_dir.*"))
+        # Relevant file type folders (from PhotoRec refinery app)
+        relevant_folders = [
+            "sqlite", "gz", "bz2", "txt", "log",
+            "plist", "json", "jsonlz4", "asl"
+        ]
 
-        if not recup_dirs:
-            self.log(f"No recup_dir.* folders found in {self.photorec_dir}", "WARNING")
-            return files
+        # Try type-organized folders first
+        for folder_name in relevant_folders:
+            folder_path = self.photorec_dir / folder_name
+            if folder_path.exists() and folder_path.is_dir():
+                dir_files = [f for f in folder_path.iterdir() if f.is_file()]
+                files.extend(dir_files)
+                self.log(f"  {folder_name}/: {len(dir_files)} files", "DEBUG")
 
-        self.log(f"Found {len(recup_dirs)} PhotoRec output directories")
+        # If no type folders found, try raw recup_dir.* format
+        if not files:
+            recup_dirs = sorted(self.photorec_dir.glob("recup_dir.*"))
+            if recup_dirs:
+                self.log(f"Found {len(recup_dirs)} recup_dir.* directories (raw PhotoRec format)")
+                for recup_dir in recup_dirs:
+                    if not recup_dir.is_dir():
+                        continue
+                    dir_files = [f for f in recup_dir.iterdir() if f.is_file()]
+                    files.extend(dir_files)
+                    self.log(f"  {recup_dir.name}: {len(dir_files)} files", "DEBUG")
 
-        for recup_dir in recup_dirs:
-            if not recup_dir.is_dir():
-                continue
-
-            dir_files = [f for f in recup_dir.iterdir() if f.is_file()]
-            files.extend(dir_files)
-            self.log(f"  {recup_dir.name}: {len(dir_files)} files", "DEBUG")
+        if not files:
+            self.log(f"No files found in {self.photorec_dir}", "WARNING")
+            self.log("Expected either: type folders (sqlite/, gz/, etc.) or recup_dir.* folders", "INFO")
 
         return files
 
@@ -280,6 +405,430 @@ class PhotoRecProcessor:
                 }
             )
             return None
+
+    def decompress_archive(self, file_path: Path) -> Path | None:
+        """
+        Decompress gzip or bzip2 archive.
+
+        Args:
+            file_path: Path to compressed file
+
+        Returns:
+            Path to decompressed file, or None if decompression failed
+        """
+        try:
+            # Read header to detect compression type
+            with open(file_path, "rb") as f:
+                magic = f.read(2)
+
+            # Determine output filename
+            output_name = file_path.stem if file_path.suffix in ('.gz', '.bz2') else f"{file_path.name}.decompressed"
+            output_path = self.decompressed_dir / output_name
+
+            # Try decompression
+            if magic == b'\x1f\x8b':  # gzip
+                try:
+                    with gzip.open(file_path, 'rb') as f_in:
+                        with open(output_path, 'wb') as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                    return output_path
+                except Exception as e:
+                    self.log(f"gzip decompression failed for {file_path.name}: {e}", "DEBUG")
+                    # Try recovery
+                    return self._try_gzrecover(file_path, output_path)
+
+            elif magic == b'BZ':  # bzip2
+                try:
+                    with bz2.open(file_path, 'rb') as f_in:
+                        with open(output_path, 'wb') as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                    return output_path
+                except Exception as e:
+                    self.log(f"bzip2 decompression failed for {file_path.name}: {e}", "DEBUG")
+                    # Try recovery
+                    return self._try_bzip2recover(file_path, output_path)
+
+        except Exception as e:
+            self.errors.append({
+                "file": str(file_path),
+                "operation": "decompress",
+                "error": str(e),
+                "timestamp": datetime.now(UTC).isoformat(),
+            })
+
+        return None
+
+    def _try_gzrecover(self, file_path: Path, output_path: Path) -> Path | None:
+        """Try to recover corrupted gzip file using gzrecover."""
+        gzrecover = shutil.which("gzrecover")
+        if not gzrecover:
+            self.log("gzrecover not found in PATH, cannot recover", "DEBUG")
+            return None
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_path = Path(tmpdir)
+                # gzrecover outputs to current directory
+                result = subprocess.run(
+                    [gzrecover, str(file_path)],
+                    cwd=tmpdir,
+                    capture_output=True,
+                    timeout=30,
+                    text=True
+                )
+
+                # Look for recovered file
+                recovered = list(tmpdir_path.glob("*"))
+                if recovered:
+                    shutil.copy(recovered[0], output_path)
+                    self.log(f"Recovered {file_path.name} with gzrecover", "SUCCESS")
+                    return output_path
+
+        except subprocess.TimeoutExpired:
+            self.log(f"gzrecover timeout on {file_path.name}", "WARNING")
+        except Exception as e:
+            self.log(f"gzrecover failed: {e}", "DEBUG")
+
+        return None
+
+    def _try_bzip2recover(self, file_path: Path, output_path: Path) -> Path | None:
+        """Try to recover corrupted bzip2 file using bzip2recover."""
+        bzip2recover = shutil.which("bzip2recover")
+        if not bzip2recover:
+            self.log("bzip2recover not found in PATH, cannot recover", "DEBUG")
+            return None
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_path = Path(tmpdir)
+                # Copy to temp (bzip2recover works in place)
+                temp_file = tmpdir_path / file_path.name
+                shutil.copy(file_path, temp_file)
+
+                # Run recovery
+                result = subprocess.run(
+                    [bzip2recover, str(temp_file)],
+                    cwd=tmpdir,
+                    capture_output=True,
+                    timeout=30,
+                    text=True
+                )
+
+                # Look for recovered files (rec*.bz2)
+                recovered = list(tmpdir_path.glob("rec*.bz2"))
+                if recovered:
+                    # Try to decompress recovered file
+                    with bz2.open(recovered[0], 'rb') as f_in:
+                        with open(output_path, 'wb') as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                    self.log(f"Recovered {file_path.name} with bzip2recover", "SUCCESS")
+                    return output_path
+
+        except subprocess.TimeoutExpired:
+            self.log(f"bzip2recover timeout on {file_path.name}", "WARNING")
+        except Exception as e:
+            self.log(f"bzip2recover failed: {e}", "DEBUG")
+
+        return None
+
+    def process_archives(self):
+        """
+        Phase 2: Decompress and recover archives.
+
+        Processes all gz/bz2 files found during classification.
+        """
+        self.log("=" * 70)
+        self.log("Phase 2: Decompressing and Recovering Archives")
+        self.log("=" * 70)
+
+        # Collect all files that need decompression
+        archives_to_process = []
+
+        for recovered_list in [self.text_logs, self.sqlite_dbs, self.other_files]:
+            for files in (recovered_list.values() if isinstance(recovered_list, dict) else []):
+                for recovered in files:
+                    suffix = recovered.source_path.suffix.lower()
+                    if suffix in ('.gz', '.bz2'):
+                        archives_to_process.append(recovered)
+
+        if not archives_to_process:
+            self.log("No archives to process")
+            return
+
+        self.log(f"Processing {len(archives_to_process)} compressed files...")
+
+        success_count = 0
+        recovered_count = 0
+        failed_count = 0
+
+        for idx, recovered in enumerate(archives_to_process, 1):
+            if idx % 50 == 0 or idx == len(archives_to_process):
+                percent = (idx / len(archives_to_process)) * 100
+                print(f"\r  Progress: {idx}/{len(archives_to_process)} ({percent:.1f}%)", end="", flush=True)
+
+            decompressed_path = self.decompress_archive(recovered.source_path)
+
+            if decompressed_path:
+                # Update recovered file to point to decompressed version
+                recovered.decompressed_path = decompressed_path
+                success_count += 1
+
+                # Re-classify decompressed content
+                reclassified = self.classify_file(decompressed_path)
+                if reclassified and reclassified.confidence > recovered.confidence:
+                    # Better classification after decompression
+                    recovered.file_type = reclassified.file_type
+                    recovered.confidence = reclassified.confidence
+                    recovered.first_timestamp = reclassified.first_timestamp
+                    recovered.last_timestamp = reclassified.last_timestamp
+                    recovered_count += 1
+            else:
+                # Move to corrupted folder
+                try:
+                    corrupted_path = self.corrupted_dir / recovered.source_path.name
+                    shutil.copy(recovered.source_path, corrupted_path)
+                    failed_count += 1
+                except Exception:
+                    pass
+
+        print()  # Newline after progress
+        self.log(f"Decompression complete:")
+        self.log(f"  ✓ Success: {success_count}")
+        self.log(f"  🔧 Recovered: {recovered_count}")
+        self.log(f"  ❌ Failed: {failed_count} (moved to corrupted_archives/)")
+
+    def merge_text_logs(self):
+        """
+        Phase 3: Merge text logs chronologically.
+
+        Uses streaming merge for memory efficiency.
+
+        Note: macOS logs don't include year in timestamps. We infer year from:
+        1. File metadata (modification time)
+        2. Context from exemplar filesystem
+        3. Fallback to current year
+
+        This is a known limitation - year ambiguity cannot be fully resolved
+        without external context.
+        """
+        self.log("=" * 70)
+        self.log("Phase 3: Merging Text Logs Chronologically")
+        self.log("=" * 70)
+
+        if not self.text_logs:
+            self.log("No text logs to merge")
+            return
+
+        combined_dir = self.output_dir / "combined_logs"
+        combined_dir.mkdir(exist_ok=True)
+
+        for log_type, files in self.text_logs.items():
+            self.log(f"Merging {len(files)} {log_type.value} files...")
+
+            # Infer year from file metadata
+            inferred_year = self._infer_year_from_files(files)
+            self.log(f"  Using year: {inferred_year} (inferred from file metadata)", "DEBUG")
+
+            # Use streaming merge with heap
+            output_path = combined_dir / f"combined_{log_type.value}.log"
+            total_lines = self._merge_log_files_streaming(files, output_path, log_type, inferred_year)
+
+            self.log(f"  ✓ Created {output_path.name} with {total_lines:,} lines", "SUCCESS")
+
+    def _infer_year_from_files(self, files: list[RecoveredFile]) -> int:
+        """
+        Infer year from file metadata.
+
+        Strategy (in order of preference):
+        1. Gzip header MTIME field (embedded creation timestamp)
+        2. File modification time
+        3. Use most common year across all files
+        4. Fallback to current year
+
+        Note: This is heuristic - year cannot be definitively determined
+        from macOS logs without external context.
+        """
+        years = []
+
+        for recovered in files:
+            file_path = recovered.source_path  # Use original file for gzip header
+
+            # Try to extract timestamp from gzip header (most reliable)
+            if file_path.suffix.lower() == '.gz':
+                try:
+                    with open(file_path, 'rb') as f:
+                        header = f.read(10)
+                        if header[:2] == b'\x1f\x8b':  # Gzip magic
+                            # MTIME is bytes 4-7 (little-endian uint32)
+                            mtime = int.from_bytes(header[4:8], 'little')
+                            if mtime > 0:  # 0 means no timestamp
+                                year = datetime.fromtimestamp(mtime, tz=UTC).year
+                                years.append(year)
+                                self.log(f"  Found gzip timestamp: {year} from {file_path.name}", "DEBUG")
+                                continue
+                except Exception:
+                    pass
+
+            # Fallback to file modification time
+            try:
+                decompressed = recovered.decompressed_path or file_path
+                mtime = decompressed.stat().st_mtime
+                year = datetime.fromtimestamp(mtime, tz=UTC).year
+                years.append(year)
+            except Exception:
+                continue
+
+        if years:
+            # Use most common year
+            from collections import Counter
+            most_common_year = Counter(years).most_common(1)[0][0]
+            return most_common_year
+
+        # Fallback
+        return datetime.now().year
+
+    def _merge_log_files_streaming(
+        self,
+        files: list[RecoveredFile],
+        output_path: Path,
+        log_type: LogType,
+        current_year: int
+    ) -> int:
+        """
+        Merge multiple log files chronologically using streaming approach.
+
+        Uses heap-based merge for memory efficiency (doesn't load all files into memory).
+
+        Args:
+            files: List of RecoveredFile objects to merge
+            output_path: Output file path
+            log_type: Type of log (for timestamp parsing)
+            current_year: Year to use for timestamp parsing
+
+        Returns:
+            Total lines written
+        """
+        # Open all files and create iterators
+        file_iterators = []
+        open_files = []
+
+        for recovered in files:
+            # Use decompressed path if available, otherwise source
+            file_path = recovered.decompressed_path or recovered.source_path
+
+            try:
+                if file_path.stat().st_size > MAX_MEMORY_LOG_SIZE:
+                    # Large file - use streaming
+                    f = open(file_path, 'r', encoding='utf-8', errors='replace')
+                    open_files.append(f)
+                    file_iterators.append(self._parse_log_lines(f, str(file_path), log_type, current_year))
+                else:
+                    # Small file - load into memory
+                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                        lines = f.readlines()
+                    file_iterators.append(self._parse_log_lines(iter(lines), str(file_path), log_type, current_year))
+
+            except Exception as e:
+                self.log(f"Failed to open {file_path.name}: {e}", "WARNING")
+                self.errors.append({
+                    "file": str(file_path),
+                    "operation": "merge_logs",
+                    "error": str(e),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                })
+
+        if not file_iterators:
+            return 0
+
+        # Heap-based merge
+        heap = []
+        total_lines = 0
+
+        # Initialize heap with first line from each file
+        for idx, iterator in enumerate(file_iterators):
+            try:
+                log_line = next(iterator)
+                heapq.heappush(heap, (log_line, idx, iterator))
+            except StopIteration:
+                pass
+
+        # Write merged output
+        try:
+            with open(output_path, 'w', encoding='utf-8') as out_f:
+                while heap:
+                    log_line, idx, iterator = heapq.heappop(heap)
+
+                    # Write line
+                    out_f.write(log_line.original_line)
+                    if not log_line.original_line.endswith('\n'):
+                        out_f.write('\n')
+
+                    total_lines += 1
+
+                    # Get next line from same file
+                    try:
+                        next_line = next(iterator)
+                        heapq.heappush(heap, (next_line, idx, iterator))
+                    except StopIteration:
+                        pass
+
+        finally:
+            # Close all open file handles
+            for f in open_files:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+
+        return total_lines
+
+    def _parse_log_lines(
+        self,
+        line_iterator: Iterator[str],
+        source_file: str,
+        log_type: LogType,
+        current_year: int
+    ) -> Iterator[LogLine]:
+        """
+        Parse log lines from an iterator, yielding LogLine objects.
+
+        Args:
+            line_iterator: Iterator of raw log lines
+            source_file: Source filename for tracking
+            log_type: Log type for timestamp parsing
+            current_year: Year to use for parsing
+
+        Yields:
+            LogLine objects with parsed timestamps
+        """
+        line_number = 0
+        last_timestamp = None
+
+        for line in line_iterator:
+            line_number += 1
+            line = line.rstrip('\n\r')
+
+            if not line.strip():
+                continue
+
+            # Try to parse timestamp
+            timestamp = TimestampParser.parse_line(line, log_type, current_year)
+
+            if timestamp:
+                last_timestamp = timestamp
+            elif last_timestamp:
+                # Multi-line log entry - use timestamp from previous line
+                timestamp = last_timestamp
+            else:
+                # No timestamp and no previous - skip or use epoch
+                timestamp = datetime(1970, 1, 1, tzinfo=UTC)
+
+            yield LogLine(
+                timestamp=timestamp,
+                original_line=line,
+                source_file=source_file,
+                line_number=line_number,
+            )
 
     def scan_and_classify(self):
         """
@@ -458,6 +1007,12 @@ Examples:
 
     # Run phase 1: scan and classify
     processor.scan_and_classify()
+
+    # Run phase 2: decompress and recover archives
+    processor.process_archives()
+
+    # Run phase 3: merge text logs chronologically
+    processor.merge_text_logs()
 
     # Save report
     processor.save_report()
