@@ -1,4 +1,12 @@
-src/resources/bin/**/*.exe filter=lfs diff=lfs merge=lfs -text
-src/resources/bin/**/gzrecover filter=lfs diff=lfs merge=lfs -text
-src/resources/bin/**/bzip2recover filter=lfs diff=lfs merge=lfs -text
-src/resources/bin/**/sqlite_dissect filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/*.exe filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/gzrecover filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/bzip2recover filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/sqlite_dissect filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/ewfmount filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/*.dylib filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/*.so filter=lfs diff=lfs merge=lfs -text
+src/resources/**/**/*.dll filter=lfs diff=lfs merge=lfs -text
+src/resources/**/ewfmount filter=lfs diff=lfs merge=lfs -text
+src/resources/**/*.dylib filter=lfs diff=lfs merge=lfs -text
+src/resources/**/*.so filter=lfs diff=lfs merge=lfs -text
+src/resources/**/*.dll filter=lfs diff=lfs merge=lfs -text

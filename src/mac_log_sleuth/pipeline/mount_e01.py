@@ -9,7 +9,7 @@ Supports ewfmount (libewf) for mounting E01 images as raw disk images,
 then uses hdiutil to mount the filesystem.
 
 Dependencies:
-  - libewf (ewfmount) - Install via: brew install libewf
+  - libewf (ewfmount) - Bundled in resources/macos/bin/
   - hdiutil (built-in macOS)
 
 Usage:
@@ -21,6 +21,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -33,23 +35,86 @@ class E01Mounter:
 
     def __init__(self):
         """Initialize the E01 mounter."""
+        self.ewfmount_path = self._find_ewfmount()
+        self.lib_path = self._get_lib_path()
         self.check_dependencies()
+
+    def _find_ewfmount(self) -> Path:
+        """
+        Find ewfmount binary.
+
+        Checks in order:
+        1. System PATH
+        2. Bundled binary in resources/macos/bin/
+
+        Returns:
+            Path to ewfmount executable
+        """
+        # Check PATH first
+        system_ewfmount = shutil.which("ewfmount")
+        if system_ewfmount:
+            return Path(system_ewfmount)
+
+        # Check bundled binary
+        system_name = platform.system().lower()
+        if system_name == "darwin":
+            bundled_path = (
+                Path(__file__).parent.parent.parent
+                / "resources"
+                / "macos"
+                / "bin"
+                / "ewfmount"
+            )
+            if bundled_path.exists():
+                return bundled_path
+
+        # Not found
+        print("[ERROR] Error: ewfmount not found")
+        print("\nInstall libewf:")
+        print("  brew install libewf")
+        print("\nOr download from: https://github.com/libyal/libewf")
+        sys.exit(1)
+
+    def _get_lib_path(self) -> Path | None:
+        """
+        Get path to bundled libraries if using bundled ewfmount.
+
+        Returns:
+            Path to lib directory or None if using system ewfmount
+        """
+        # Only needed if using bundled binary
+        bundled_bin = (
+            Path(__file__).parent.parent.parent
+            / "resources"
+            / "macos"
+            / "bin"
+            / "ewfmount"
+        )
+
+        if self.ewfmount_path == bundled_bin:
+            lib_path = (
+                Path(__file__).parent.parent.parent
+                / "resources"
+                / "macos"
+                / "lib"
+            )
+            return lib_path if lib_path.exists() else None
+
+        return None
 
     def check_dependencies(self):
         """Check if required tools are installed."""
-        # Check for ewfmount
-        if not shutil.which("ewfmount"):
-            print("[ERROR] Error: ewfmount not found")
-            print("\nInstall libewf:")
-            print("  brew install libewf")
-            print("\nOr download from: https://github.com/libyal/libewf")
-            sys.exit(1)
-
         # Check for hdiutil (should always be present on macOS)
         if not shutil.which("hdiutil"):
             print("[ERROR] Error: hdiutil not found (required macOS tool)")
             sys.exit(1)
 
+        # Report which ewfmount we're using
+        if self.lib_path:
+            print(f"[OK] Using bundled ewfmount: {self.ewfmount_path}")
+            print(f"[OK] Using bundled libraries: {self.lib_path}")
+        else:
+            print(f"[OK] Using system ewfmount: {self.ewfmount_path}")
         print("[OK] Dependencies OK (ewfmount, hdiutil)")
 
     def mount_e01(
@@ -91,12 +156,22 @@ class E01Mounter:
 
         # Step 2: Mount E01 as raw image using ewfmount
         print(f"\n[STEP] Step 1: Mounting E01 to raw image...")
-        cmd = ["ewfmount", str(e01_path), str(raw_mount_point)]
+        cmd = [str(self.ewfmount_path), str(e01_path), str(raw_mount_point)]
         print(f"   Command: {' '.join(cmd)}")
+
+        # Set up environment for bundled libraries
+        env = os.environ.copy()
+        if self.lib_path:
+            # Add bundled lib path to DYLD_LIBRARY_PATH for macOS
+            if "DYLD_LIBRARY_PATH" in env:
+                env["DYLD_LIBRARY_PATH"] = f"{self.lib_path}:{env['DYLD_LIBRARY_PATH']}"
+            else:
+                env["DYLD_LIBRARY_PATH"] = str(self.lib_path)
+            print(f"   Using library path: {self.lib_path}")
 
         try:
             result = subprocess.run(
-                cmd, check=True, capture_output=True, text=True, timeout=30
+                cmd, check=True, capture_output=True, text=True, timeout=30, env=env
             )
             if result.stdout:
                 print(f"   {result.stdout}")
@@ -124,30 +199,17 @@ class E01Mounter:
 
         print(f"   Raw image: {raw_image}")
 
-        # Step 4: Mount the filesystem using hdiutil
-        print(f"\n[STEP] Step 2: Mounting filesystem from raw image...")
+        # Step 4: Attach disk image without auto-mounting
+        print(f"\n[STEP] Step 2: Attaching disk image...")
 
-        # First, get info about the image
-        try:
-            info_result = subprocess.run(
-                ["hdiutil", "imageinfo", str(raw_image)],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            print(f"   Image info retrieved")
-        except subprocess.CalledProcessError as e:
-            print(f"[WARNING]  Warning: Could not get image info: {e}")
-
-        # Attempt to mount read-only
         cmd = [
             "hdiutil",
             "attach",
-            str(raw_image),
+            "-nomount",
             "-readonly",
-            "-nobrowse",
-            "-noverify",
+            "-imagekey",
+            "diskimage-class=CRawDiskImage",
+            str(raw_image),
         ]
         print(f"   Command: {' '.join(cmd)}")
 
@@ -156,36 +218,40 @@ class E01Mounter:
                 cmd, check=True, capture_output=True, text=True, timeout=60
             )
 
-            # Parse output to find mount point
-            mount_point = None
+            # Parse device node (e.g., /dev/disk4)
+            disk_device = None
             for line in result.stdout.strip().split("\n"):
-                if "/Volumes/" in line or "/dev/" in line:
-                    parts = line.split()
-                    for part in parts:
-                        if part.startswith("/Volumes/"):
-                            mount_point = Path(part)
-                            break
-                if mount_point:
+                if line.strip().startswith("/dev/disk") and "GUID_partition_scheme" in line:
+                    disk_device = line.split()[0]
                     break
 
-            if mount_point is None:
-                # Try to extract from last column
-                lines = result.stdout.strip().split("\n")
-                if lines:
-                    last_line = lines[-1]
-                    parts = last_line.split()
-                    if parts:
-                        mount_point = Path(parts[-1])
+            if not disk_device:
+                # Fallback: get first /dev/disk entry
+                for line in result.stdout.strip().split("\n"):
+                    if line.strip().startswith("/dev/disk"):
+                        disk_device = line.split()[0]
+                        break
 
-            if mount_point and mount_point.exists():
-                print(f"   [OK] Filesystem mounted at: {mount_point}")
-            else:
-                print(f"   [WARNING]  Warning: Could not determine mount point")
+            if not disk_device:
+                print(f"[ERROR] Error: Could not determine disk device")
                 print(f"   hdiutil output:\n{result.stdout}")
-                mount_point = None
+                subprocess.run(["umount", str(raw_mount_point)], capture_output=True)
+                sys.exit(1)
+
+            print(f"   [OK] Disk attached as: {disk_device}")
+            print(f"\n   Partition layout:")
+
+            # Show partition layout
+            diskutil_result = subprocess.run(
+                ["diskutil", "list", disk_device],
+                capture_output=True,
+                text=True,
+            )
+            for line in diskutil_result.stdout.strip().split("\n"):
+                print(f"      {line}")
 
         except subprocess.CalledProcessError as e:
-            print(f"[ERROR] Error mounting filesystem: {e}")
+            print(f"[ERROR] Error attaching disk: {e}")
             if e.stderr:
                 print(f"   {e.stderr}")
             print("\n   Cleaning up raw mount...")
@@ -197,20 +263,107 @@ class E01Mounter:
             subprocess.run(["umount", str(raw_mount_point)], capture_output=True)
             sys.exit(1)
 
-        # Step 5: Success summary
+        # Step 5: Mount the main HFS+ partition
+        print(f"\n[STEP] Step 3: Mounting HFS+ partition...")
+
+        # Determine which partition to mount (usually partition 2 for HFS+)
+        # We'll look for Apple_HFS partition
+        hfs_partition = None
+        for line in diskutil_result.stdout.strip().split("\n"):
+            if "Apple_HFS" in line or "Apple_APFS" in line:
+                parts = line.split()
+                if parts:
+                    # Get partition identifier (e.g., disk4s2)
+                    hfs_partition = parts[-1]
+                    break
+
+        if not hfs_partition:
+            print(f"[WARNING]  Warning: Could not find HFS+ or APFS partition")
+            print(f"   Available partitions shown above")
+            print(f"   Disk device: {disk_device}")
+            mount_point = None
+        else:
+            # Create mount point in /private/tmp to avoid /Volumes name conflicts
+            fs_mount_point = Path(f"/private/tmp/{e01_path.stem}_filesystem")
+            fs_mount_point.mkdir(parents=True, exist_ok=True)
+
+            print(f"   HFS+ partition: {hfs_partition}")
+            print(f"   Mount point: {fs_mount_point}")
+
+            # Use mount_hfs with -j flag (journal) which allows mounting
+            # even when there's a volume name conflict
+            cmd = [
+                "mount_hfs",
+                "-j",
+                "-o",
+                "rdonly",
+                f"/dev/{hfs_partition}",
+                str(fs_mount_point),
+            ]
+            print(f"   Command: {' '.join(cmd)}")
+
+            try:
+                result = subprocess.run(
+                    cmd, check=True, capture_output=True, text=True, timeout=30
+                )
+                mount_point = fs_mount_point
+                print(f"   [OK] Filesystem mounted successfully")
+
+            except subprocess.CalledProcessError as e:
+                print(f"[ERROR] Error mounting HFS+ partition: {e}")
+                if e.stderr:
+                    print(f"   {e.stderr}")
+                print(f"\n   Attempting diskutil mount as fallback...")
+
+                # Fallback: try diskutil mount
+                fallback_result = subprocess.run(
+                    ["diskutil", "mount", f"/dev/{hfs_partition}"],
+                    capture_output=True,
+                    text=True,
+                )
+
+                if fallback_result.returncode == 0:
+                    # Check where it mounted
+                    info_result = subprocess.run(
+                        ["diskutil", "info", f"/dev/{hfs_partition}"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    for line in info_result.stdout.split("\n"):
+                        if "Mount Point:" in line:
+                            mount_point = Path(line.split(":", 1)[1].strip())
+                            print(f"   [OK] Mounted via diskutil at: {mount_point}")
+                            break
+                else:
+                    print(f"   [WARNING]  Could not mount filesystem")
+                    print(f"   You may need to mount {hfs_partition} manually")
+                    mount_point = None
+                    # Don't exit - we can still provide the disk device info
+
+        # Step 6: Success summary
         print(f"\n{'='*80}")
         print(f"[OK] E01 Image Mounted Successfully")
         print(f"{'='*80}")
-        print(f"Raw mount point: {raw_mount_point}")
-        print(f"Filesystem mount: {mount_point}")
-        print(f"\nYou can now run the exemplar scanner:")
-        print(f"  python pipeline/exemplar_scanner.py --source {mount_point}")
+        print(f"Raw EWF mount: {raw_mount_point}")
+        print(f"Disk device: {disk_device}")
+        if mount_point:
+            print(f"Filesystem mount: {mount_point}")
+            print(f"\nYou can now run the exemplar scanner:")
+            print(f"  python pipeline/exemplar_scanner.py --source {mount_point}")
+        else:
+            print(f"Filesystem: Not mounted (manual mount required)")
+            print(f"\nTo manually mount partition {hfs_partition}:")
+            print(f"  mkdir -p /tmp/my_mount")
+            print(f"  mount_hfs -j -o rdonly /dev/{hfs_partition} /tmp/my_mount")
+
         print(f"\nTo unmount when done:")
-        print(f"  python pipeline/mount_e01.py --unmount-raw {raw_mount_point}")
-        print(f"  hdiutil detach {mount_point}")
+        if mount_point:
+            print(f"  umount {mount_point}")
+        print(f"  hdiutil detach {disk_device}")
+        print(f"  umount {raw_mount_point}")
         print(f"{'='*80}\n")
 
-        return raw_mount_point, mount_point
+        return raw_mount_point, mount_point, disk_device
 
     def unmount_raw(self, raw_mount_point: Path):
         """
