@@ -118,17 +118,18 @@ class E01Mounter:
         print("[OK] Dependencies OK (ewfmount, hdiutil)")
 
     def mount_e01(
-        self, e01_path: Path, raw_mount_point: Path | None = None
-    ) -> tuple[Path, Path]:
+        self, e01_path: Path, raw_mount_point: Path | None = None, partition_num: int | None = None
+    ) -> tuple[Path, Path | None, str]:
         """
         Mount an E01 image.
 
         Args:
             e01_path: Path to .E01 file (or first segment if split)
             raw_mount_point: Optional directory to mount raw image (default: temp dir)
+            partition_num: Optional partition number to mount (default: auto-select)
 
         Returns:
-            Tuple of (raw_mount_point, filesystem_mount_point)
+            Tuple of (raw_mount_point, filesystem_mount_point, disk_device)
         """
         if not e01_path.exists():
             print(f"[ERROR] Error: E01 file not found: {e01_path}")
@@ -266,16 +267,68 @@ class E01Mounter:
         # Step 5: Mount the main HFS+ partition
         print(f"\n[STEP] Step 3: Mounting HFS+ partition...")
 
-        # Determine which partition to mount (usually partition 2 for HFS+)
-        # We'll look for Apple_HFS partition
+        # Determine which partition to mount
         hfs_partition = None
-        for line in diskutil_result.stdout.strip().split("\n"):
-            if "Apple_HFS" in line or "Apple_APFS" in line:
-                parts = line.split()
-                if parts:
-                    # Get partition identifier (e.g., disk4s2)
-                    hfs_partition = parts[-1]
-                    break
+
+        # If user specified a partition number, use that
+        if partition_num is not None:
+            hfs_partition = f"{disk_device}s{partition_num}"
+            print(f"   Using user-specified partition: {hfs_partition}")
+        else:
+            # Auto-select: Find the largest HFS+/APFS partition that's NOT a recovery partition
+            partition_candidates = []
+
+            for line in diskutil_result.stdout.strip().split("\n"):
+                # Skip header lines and non-partition lines
+                if not line.strip() or "TYPE NAME" in line or "#:" in line:
+                    continue
+
+                # Look for HFS+ or APFS partitions
+                if "Apple_HFS" in line or "Apple_APFS" in line:
+                    # Skip Recovery partitions
+                    if "Recovery" in line or "Apple_Boot" in line:
+                        print(f"   Skipping recovery partition: {line.strip()}")
+                        continue
+
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        # Parse: partition_type, name, size, identifier
+                        # Example: "2: Apple_HFS Macintosh HD 499.4 GB disk4s2"
+                        identifier = parts[-1]  # disk4s2
+                        size_str = parts[-2]    # GB/MB/KB
+                        size_unit = parts[-3]   # 499.4
+
+                        # Convert size to bytes for comparison
+                        try:
+                            size_value = float(size_unit)
+                            if "GB" in size_str or "gb" in size_str.lower():
+                                size_bytes = size_value * 1024 * 1024 * 1024
+                            elif "MB" in size_str or "mb" in size_str.lower():
+                                size_bytes = size_value * 1024 * 1024
+                            elif "KB" in size_str or "kb" in size_str.lower():
+                                size_bytes = size_value * 1024
+                            else:
+                                size_bytes = size_value
+
+                            partition_candidates.append({
+                                'identifier': identifier,
+                                'size': size_bytes,
+                                'line': line.strip()
+                            })
+                        except (ValueError, IndexError):
+                            # If we can't parse size, add it anyway with size 0
+                            partition_candidates.append({
+                                'identifier': identifier,
+                                'size': 0,
+                                'line': line.strip()
+                            })
+
+            # Select the largest partition
+            if partition_candidates:
+                partition_candidates.sort(key=lambda x: x['size'], reverse=True)
+                hfs_partition = partition_candidates[0]['identifier']
+                print(f"   Found {len(partition_candidates)} candidate partition(s)")
+                print(f"   Auto-selected largest: {partition_candidates[0]['line']}")
 
         if not hfs_partition:
             print(f"[WARNING]  Warning: Could not find HFS+ or APFS partition")
@@ -491,6 +544,11 @@ def main():
         help="Optional: Directory for raw mount (default: /tmp/ewfmount_*)",
     )
     parser.add_argument(
+        "--partition",
+        type=int,
+        help="Optional: Partition number to mount (default: auto-select largest HFS+/APFS)",
+    )
+    parser.add_argument(
         "--unmount-raw", type=Path, help="Unmount a raw EWF mount point"
     )
     parser.add_argument(
@@ -511,7 +569,7 @@ def main():
     elif args.unmount_filesystem:
         mounter.unmount_filesystem(args.unmount_filesystem)
     elif args.image:
-        mounter.mount_e01(args.image, args.raw_mount_point)
+        mounter.mount_e01(args.image, args.raw_mount_point, args.partition)
     else:
         parser.print_help()
         print("\n[TIP] Quick start:")
