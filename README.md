@@ -12,15 +12,15 @@ beyond what exists in the original reference files alone.
 ### Exemplar
 >
 > The set of baseline target artifacts (databases, logs, etc.) from a reference system that forms
-> the "ground truth" for recovery.
+> the "ground truth" for data recovery.
 >
 ### Candidate
 >
-> An unclassified files MARS will recover then attempt to match to exemplar artifacts.
+> An unclassified file MARS will recover then attempt to match to exemplar artifacts.
 >
 ### Rubric
 >
-> A JSON file that contains per-column matching guide for a given database.
+> A JSON schema that contains per-column metadata used for matching candidate databases.
 
 ## How It Works
 
