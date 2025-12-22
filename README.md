@@ -193,12 +193,10 @@ MARS uses a three-stage workflow:
 
 The TUI guides you through each step.
 
+**Free Match Mode**: Process any set of SQLite databases through the recovery pipeline without an exemplar baseline.
+
 > [!TIP]
 > **Press `h` in the MARS console for a comprehensive help guide.**
-
----
-
-**Free Match Mode**: Process any set of SQLite databases through the recovery pipeline without an exemplar baseline.
 
 ## Uninstallation
 
