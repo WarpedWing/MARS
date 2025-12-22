@@ -49,7 +49,7 @@ jobs:
             <title>MARS Documentation</title>
           </head>
           <body>
-            <p>Redirecting to <a href="mars_help.html">MARS User Guide</a>...</p>
+            <p>Redirecting to <a href="help/mars_help.html">MARS User Guide</a>...</p>
           </body>
           </html>
           EOF
