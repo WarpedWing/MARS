@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p _site
           cp -r src/resources/help/* _site/
-          cp -r src/resources/images/* _site/
+          cp -r src/resources/images/* _site/images/
           # Create index.html that redirects to mars_help.html
           cat > _site/index.html << 'EOF'
           <!DOCTYPE html>
