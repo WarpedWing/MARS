@@ -106,7 +106,10 @@ pipeline on any set of files to automatically recover as much data as possible. 
 **macOS:**
 
 ```bash
-chmod +x install.sh \
+chmod +x install.sh
+```
+
+```bash
 ./install.sh
 ```
 
@@ -144,7 +147,10 @@ Or double-click `install.bat`.
 fuse-t allows MARS to mount forensic disk images directly for analysis without extracting them first. Install via Homebrew:
 
 ```bash
-brew tap macos-fuse-t/homebrew-cask \
+brew tap macos-fuse-t/homebrew-cask
+```
+
+```bash
 brew install fuse-t fuse-t-sshfs
 ```
 
