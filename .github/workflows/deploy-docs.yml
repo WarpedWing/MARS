@@ -45,7 +45,7 @@ jobs:
           <html>
           <head>
             <meta charset="utf-8">
-            <meta http-equiv="refresh" content="0; url=mars_help.html">
+            <meta http-equiv="refresh" content="0; url=help/mars_help.html">
             <title>MARS Documentation</title>
           </head>
           <body>
