@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wi-Fi Report Generator - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#report_modules" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Wi-Fi / Network Report Generator</h1>
+<p>This module parses macOS Wi-Fi and network artifacts to generate an HTML report summarizing network activity.</p>
+<h2>Disclaimer</h2>
+<p><strong>This report is for informational and investigative purposes only.</strong> The data presented should be
+independently verified before being relied upon for any legal, regulatory, or evidentiary purpose.</p>
+<h3>Limitations</h3>
+<ul>
+<li><strong>Timestamp accuracy</strong>: Wi-Fi log timestamps lack year information. The module infers the year by
+correlating with DHCP lease timestamps when available. If no DHCP data exists, it falls back to the
+current/previous year. The inferred year should be validated when possible.</li>
+<li><strong>Channel/band ambiguity</strong>: WiFi 6E (6GHz) channel numbers overlap with 2.4GHz and 5GHz ranges.
+Without frequency data, channels 1-196 are attributed to legacy bands; only channels 197-233 are
+unambiguously identified as 6GHz. When frequency data is available, it provides unambiguous band identification.</li>
+<li><strong>Incomplete coverage</strong>: This module parses traditional plist-based artifacts and legacy wifi.log
+files. Unified logs (tracev3 format) are not currently parsed, which may omit events on macOS 10.12+.</li>
+<li><strong>Locally Administered Addresses (LAA)</strong>: macOS uses randomized (locally administered) MAC
+addresses in certain contexts. The LAA flag indicates this but does not guarantee the address is or
+is not the device's true hardware address.</li>
+<li><strong>DHCP lease interpretation</strong>: Lease timestamps indicate when the device obtained an IP address,
+not necessarily continuous network presence.</li>
+</ul>
+<h2>Report Sections</h2>
+<h3>Known Networks</h3>
+<p>Displays Wi-Fi networks the device has connected to, extracted from:</p>
+<ul>
+<li><code>com.apple.airport.preferences.plist</code> (macOS 10.15 and earlier)</li>
+<li><code>com.apple.wifi.known-networks.plist</code> (macOS 11 Big Sur and later)</li>
+</ul>
+<p>Shows SSID, BSSID, security type, first/last connection times, and auto-join settings.</p>
+<h3>BSSID Activity</h3>
+<p>Aggregates BSSID (access point MAC address) sightings across all parsed sources.
+Includes vendor lookup from OUI database, signal strength (RSSI), and channel/band information where available.</p>
+<h3>BSSID Cross-References</h3>
+<p>Cross-references BSSIDs found in multiple sources (logs, plists, DHCP leases) to identify consistent network associations.</p>
+<h3>Wi-Fi Log Activity</h3>
+<p>Events extracted from traditional Wi-Fi log files (<code>/var/log/wifi.log</code> and rotated variants).
+Note: Modern macOS increasingly uses unified logging, which is not parsed by this module.</p>
+<h3>Scan Burst Summary</h3>
+<p>Groups Wi-Fi scanning events that occurred in rapid succession, which may indicate device wake events,
+location changes, or active network searching.</p>
+<h3>Daily Presence Rollup</h3>
+<p>When DHCP lease data is available, summarizes daily network presence by correlating lease timestamps with Wi-Fi events.</p>
+<h3>Sightings Around Leases</h3>
+<p>Shows Wi-Fi events that occurred near DHCP lease acquisition times, helping correlate
+network connections with specific access points.</p>
+<h3>DHCP Leases</h3>
+<p>Parses DHCP lease plists from <code>/var/db/dhcpclient/leases/</code> showing IP address assignments,
+lease durations, and router information.</p>
+<h3>Interfaces &amp; Service Mapping</h3>
+<p>Network interface configuration from <code>NetworkInterfaces.plist</code>, showing hardware addresses and interface types.</p>
+<h3>Wi-Fi Message Tracer Metrics</h3>
+<p>Parses <code>com.apple.wifi.message-tracer.plist</code> for aggregate Wi-Fi statistics and metrics.</p>
+<h3>Network Locations Map</h3>
+<p>When geographic data is available (from CoreLocation caches or similar), displays an interactive map of network locations.</p>
+<h2>Data Sources</h2>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Path Pattern</th>
+<th>macOS Versions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Airport Preferences</td>
+<td><code>com.apple.airport.preferences.plist</code></td>
+<td>10.6 - 10.15</td>
+</tr>
+<tr>
+<td>Known Networks (Modern)</td>
+<td><code>com.apple.wifi.known-networks.plist</code></td>
+<td>11.0+</td>
+</tr>
+<tr>
+<td>Wi-Fi Message Tracer</td>
+<td><code>com.apple.wifi.message-tracer.plist</code></td>
+<td>Various</td>
+</tr>
+<tr>
+<td>DHCP Leases</td>
+<td><code>/var/db/dhcpclient/leases/*</code></td>
+<td>All</td>
+</tr>
+<tr>
+<td>Network Interfaces</td>
+<td><code>NetworkInterfaces.plist</code></td>
+<td>All</td>
+</tr>
+<tr>
+<td>Network Preferences</td>
+<td><code>preferences.plist</code></td>
+<td>All</td>
+</tr>
+<tr>
+<td>EAPOL Client</td>
+<td><code>com.apple.eapolclient.plist</code></td>
+<td>All</td>
+</tr>
+<tr>
+<td>Wi-Fi Logs</td>
+<td><code>/var/log/wifi.log*</code></td>
+<td>Pre-10.12 (legacy)</td>
+</tr>
+</tbody>
+</table>
+<h2>Not Currently Parsed</h2>
+<ul>
+<li><strong>Unified Logs (tracev3)</strong>: Modern macOS stores WiFi events in unified logs under the <code>com.apple.wifi</code> subsystem.
+Parsing these requires Apple-proprietary format handling.</li>
+<li><strong>Private MAC Mappings</strong>: <code>com.apple.wifi-private-mac-networks.plist</code> (private MAC address associations)</li>
+<li><strong>Keychain entries</strong>: Wi-Fi passwords and certificates stored in Keychain</li>
+</ul>
+<h2>Output Files</h2>
+<ul>
+<li><code>wifi_summary.json</code> - Raw parsed data in JSON format (includes file provenance)</li>
+<li><code>wifi_events.ndjson</code> - Normalized event stream (newline-delimited JSON)</li>
+<li><code>wifi_presence_daily.csv</code> - Daily presence rollup</li>
+<li><code>wifi_report.html</code> - Human-readable HTML report</li>
+</ul>
+<h2>File Provenance</h2>
+<p>The <code>wifi_summary.json</code> output includes a <code>file_provenance</code> array with cryptographic hashes and metadata
+for all parsed source files:</p>
+<pre><code class="language-json">{
+  &quot;file_provenance&quot;: [
+    {
+      &quot;path&quot;: &quot;/path/to/com.apple.wifi.known-networks.plist&quot;,
+      &quot;sha256&quot;: &quot;abc123...&quot;,
+      &quot;size_bytes&quot;: 12345,
+      &quot;mtime_iso&quot;: &quot;2024-03-15T10:23:45+00:00&quot;
+    }
+  ]
+}
+</code></pre>
+<p>This enables verification that source files have not been modified since analysis.
+The SHA256 hash can be compared against known-good values or chain-of-custody records.</p>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

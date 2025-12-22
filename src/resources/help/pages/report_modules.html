@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MARS Report Modules - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#report_modules" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>MARS Report Modules</h1>
+<p>Report modules are plugins that run post-processing tasks after the main scan pipeline completes.
+Each module is self-contained in its own directory with a <code>mars_module.yaml</code> configuration file.</p>
+<h2>Overview</h2>
+<p>The module system provides:</p>
+<ul>
+<li><strong>Automatic discovery</strong> - Modules are discovered by scanning for <code>mars_module.yaml</code> files</li>
+<li><strong>Scan type filtering</strong> - Modules specify when they run (exemplar, candidate, or free scans)</li>
+<li><strong>Target resolution</strong> - Modules can target specific database types or the scan root</li>
+<li><strong>Argument building</strong> - Arguments are configured in YAML and built automatically</li>
+<li><strong>Progress reporting</strong> - Modules can optionally report progress to the UI</li>
+</ul>
+<h2>Directory Structure</h2>
+<pre><code class="language-text">report_modules/
+│
+├── __init__.py
+├── module_config.py          # Configuration parsing
+├── module_runner.py          # Module execution
+├── report_module_manager.py  # Discovery and orchestration
+├── argument_builder.py       # Argument construction
+├── target_resolver.py        # Target path resolution
+├── progress_interface.py     # Progress reporting API
+├── README.md                 # This file
+│
+├── my_module/                # Example module
+│   ├── mars_module.yaml       # Module configuration (required)
+│   ├── my_entry.py           # Entry point with main() function
+│   └── helpers.py            # Additional module files
+│
+└── ...
+</code></pre>
+<h2>Module Configuration (mars_module.yaml)</h2>
+<p>Each module requires an <code>mars_module.yaml</code> file in its directory.</p>
+<h3>Required Fields</h3>
+<pre><code class="language-yaml">module_info:
+  name: &quot;Display Name&quot;              # Human-readable name for logs and UI
+  report_folder_name: &quot;output_dir&quot;  # Created in reports/ directory
+  version: &quot;1.0&quot;                    # Version string (informational)
+  description: &quot;What this does&quot;     # Description (informational)
+  scan_type: [&quot;exemplar&quot;]           # When to run (see Scan Types below)
+  target: &quot;root&quot;                    # What to scan (see Targets below)
+  entry: &quot;my_entry&quot;                 # Entry point filename (without .py)
+  active: True                      # Enable/disable module
+</code></pre>
+<h3>Optional Fields</h3>
+<pre><code class="language-yaml">module_info:
+  dependencies: [&quot;pandas&quot;]          # External dependencies (informational)
+  readme: &quot;README.md&quot;               # Optional readme file in module dir
+</code></pre>
+<h3>Scan Types</h3>
+<p>The <code>scan_type</code> field controls when a module runs. Valid values:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>exemplar</code></td>
+<td>Runs during exemplar scans</td>
+</tr>
+<tr>
+<td><code>candidate</code></td>
+<td>Runs during candidate scans</td>
+</tr>
+<tr>
+<td><code>free</code></td>
+<td>Runs during Free Match scans</td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<pre><code class="language-yaml">scan_type: [&quot;exemplar&quot;]                    # Only exemplar scans
+scan_type: [&quot;candidate&quot;]                   # Only candidate scans
+scan_type: [&quot;exemplar&quot;, &quot;candidate&quot;]       # Both standard scan types
+scan_type: [&quot;exemplar&quot;, &quot;candidate&quot;, &quot;free&quot;]  # All scan types
+</code></pre>
+<h3>Targets</h3>
+<p>The <code>target</code> field specifies what the module processes:</p>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"root"</code></td>
+<td>Module receives the scan root path; it handles its own file discovery</td>
+</tr>
+<tr>
+<td><code>"Database Name"</code></td>
+<td>Catalog entry name (e.g., "Firefox Cache"); resolved to actual path(s)</td>
+</tr>
+</tbody>
+</table>
+<p>For catalog-based targets, the module may be called multiple times if multiple matches exist (e.g.,
+per-user databases). The output directory will include the username suffix automatically. For example, a target of
+<code>Chrome History</code>will match <code>Chrome History_Default</code>, <code>Chrome History_admin</code>, <code>Chrome_History_usernameX</code>, etc.</p>
+<p>To find the catalog names, reference <code>catalog/artifact_recovery_catalog.yaml</code>.</p>
+<p><strong>Important for Free Match modules:</strong> Modules with <code>scan_type: ["free"]</code> must use <code>target: "root"</code>
+because Free Match scans don't use the database catalog. Catalog-based targets won't resolve during free scans.</p>
+<h2>Arguments Configuration</h2>
+<p>Arguments define the command-line interface for the module's <code>main()</code> function.</p>
+<h3>Argument Structure</h3>
+<pre><code class="language-yaml">arguments:
+  entry_file_name:        # Must match the module 'entry' field
+    - name: &quot;input_path&quot;      # Argument identifier
+      flag: null              # null = positional, &quot;--flag&quot; = named
+      type: &quot;Path&quot;            # Type: Path, str, int, bool
+      help: &quot;Description&quot;     # Help text
+      required: True          # Is this required?
+      default: null           # Default value
+      value: null             # Pre-configured value (overrides default)
+      set: False              # For optional args: include if True
+      choices: null           # Valid choices (optional)
+</code></pre>
+<h3>Argument Types</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Path</code></td>
+<td>Filesystem path</td>
+<td><code>/path/to/file</code></td>
+</tr>
+<tr>
+<td><code>str</code></td>
+<td>String value</td>
+<td><code>"value"</code></td>
+</tr>
+<tr>
+<td><code>int</code></td>
+<td>Integer</td>
+<td><code>42</code></td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td>Boolean flag</td>
+<td><code>--verbose</code> (flag only, no value. is either set or not set.)</td>
+</tr>
+</tbody>
+</table>
+<h3>Special Arguments</h3>
+<p>Two argument names have special handling:</p>
+<ul>
+<li><strong><code>input_path</code></strong> - Automatically set to the resolved target path</li>
+<li><strong><code>output_path</code></strong> (with <code>flag: "--out"</code>) - Automatically set to the output directory</li>
+</ul>
+<h3>Argument Examples</h3>
+<p><strong>Positional argument:</strong></p>
+<pre><code class="language-yaml">- name: &quot;input_path&quot;
+  flag: null                  # No flag = positional
+  type: &quot;Path&quot;
+  required: True
+</code></pre>
+<p><strong>Named argument:</strong></p>
+<pre><code class="language-yaml">- name: &quot;output_path&quot;
+  flag: &quot;--out&quot;               # Will be: --out /path/to/output
+  type: &quot;Path&quot;
+  required: True
+</code></pre>
+<p><strong>Boolean flag:</strong></p>
+<pre><code class="language-yaml">- name: &quot;verbose&quot;
+  flag: &quot;--verbose&quot;
+  type: &quot;bool&quot;
+  set: True                   # Include the flag (no value)
+</code></pre>
+<p><strong>Optional with default:</strong></p>
+<pre><code class="language-yaml">- name: &quot;workers&quot;
+  flag: &quot;--workers&quot;
+  type: &quot;int&quot;
+  default: 4
+  set: False                  # Don't include unless set: True
+</code></pre>
+<h2>Entry Point Requirements</h2>
+<p>The entry file must have a <code>main()</code> function that:</p>
+<ol>
+<li>Uses <code>argparse</code> to parse arguments matching the YAML configuration</li>
+<li>Reads from <code>sys.argv</code> (set by the module runner)</li>
+<li>Returns <code>None</code> (success determined by lack of exceptions)</li>
+</ol>
+<h3>Minimal Example</h3>
+<pre><code class="language-python">#!/usr/bin/env python3
+&quot;&quot;&quot;My module entry point.&quot;&quot;&quot;
+
+import argparse
+from pathlib import Path
+
+
+def main() -&gt; None:
+    &quot;&quot;&quot;Entry point called by ModuleRunner.&quot;&quot;&quot;
+    parser = argparse.ArgumentParser(description=&quot;Process files&quot;)
+    parser.add_argument(&quot;input_path&quot;, type=Path, help=&quot;Input directory&quot;)
+    parser.add_argument(&quot;--out&quot;, type=Path, required=True, help=&quot;Output directory&quot;)
+    parser.add_argument(&quot;--verbose&quot;, action=&quot;store_true&quot;, help=&quot;Verbose output&quot;)
+
+    args = parser.parse_args()
+
+    # Module logic here
+    output_file = args.out / &quot;results.csv&quot;
+    # ...
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+</code></pre>
+<h2>Progress Reporting</h2>
+<p>Modules can optionally report progress to the UI. This is especially useful for modules that process
+many files or have multiple steps.</p>
+<h3>Using Progress Reporting</h3>
+<pre><code class="language-python">from mars.report_modules.progress_interface import get_progress
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser()
+    # ... parse args ...
+    args = parser.parse_args()
+
+    files = list(args.input_path.rglob(&quot;*.db&quot;))
+
+    # Get progress interface (None if running standalone)
+    progress = get_progress()
+
+    # Set total for determinate progress bar
+    if progress:
+        progress.set_total(len(files))
+
+    for file in files:
+        process_file(file)
+
+        # Update progress
+        if progress:
+            progress.advance()  # Increment by 1
+</code></pre>
+<h3>Progress API</h3>
+<pre><code class="language-python">from mars.report_modules.progress_interface import get_progress
+
+progress = get_progress()  # Returns ModuleProgress or None
+
+if progress:
+    # Set total items (None for indeterminate &quot;throbbing&quot; progress)
+    progress.set_total(100)
+    progress.set_total(None)      # Indeterminate
+
+    # Update progress
+    progress.advance()            # Increment by 1
+    progress.advance(5)           # Increment by 5
+    progress.update(current=50)   # Set to absolute value
+
+    # Update with message
+    progress.advance(message=&quot;Processing config.db&quot;)
+    progress.set_message(&quot;Finalizing...&quot;)
+</code></pre>
+<h3>Progress Display</h3>
+<p>When modules report progress:</p>
+<ul>
+<li><strong>Determinate</strong> (total set): Shows <code>[current/total]</code> and percentage</li>
+<li><strong>Indeterminate</strong> (total=None): Shows message only, bar "throbs"</li>
+<li><strong>No progress calls</strong>: Shows "Running: Module Name"</li>
+</ul>
+<h3>Backward Compatibility</h3>
+<p>Progress reporting is completely optional:</p>
+<ul>
+<li>Modules that don't import <code>get_progress</code> work normally</li>
+<li><code>get_progress()</code> returns <code>None</code> when running standalone (not via ModuleRunner)</li>
+<li>Always check <code>if progress:</code> before calling progress methods</li>
+</ul>
+<h2>Inputs and Outputs</h2>
+<h3>Inputs</h3>
+<p>Modules receive:</p>
+<ol>
+<li><strong>Input path</strong> - Resolved from <code>target</code> field:</li>
+<li>For <code>"root"</code>: The scan root directory</li>
+<li>
+<p>For catalog names: Path to the matching database/directory</p>
+</li>
+<li>
+<p><strong>Output directory</strong> - Created automatically:</p>
+</li>
+<li>Path: <code>{scan_root}/reports/{report_folder_name}/</code></li>
+<li>For multi-user targets: <code>{scan_root}/reports/{report_folder_name}_{username}/</code></li>
+</ol>
+<h3>Outputs</h3>
+<p>Modules should write output files to the provided output directory. Common patterns:</p>
+<pre><code class="language-python"># CSV report
+csv_path = args.out / &quot;results.csv&quot;
+df.to_csv(csv_path, index=False)
+
+# JSON report
+json_path = args.out / &quot;summary.json&quot;
+with json_path.open(&quot;w&quot;) as f:
+    json.dump(data, f, indent=2)
+
+# Multiple outputs
+(args.out / &quot;details&quot;).mkdir(exist_ok=True)
+for item in items:
+    item_path = args.out / &quot;details&quot; / f&quot;{item.name}.json&quot;
+    # ...
+</code></pre>
+<h2>Complete Example</h2>
+<h3>mars_module.yaml</h3>
+<pre><code class="language-yaml">module_info:
+  name: &quot;File Analyzer&quot;
+  report_folder_name: &quot;file_analysis&quot;
+  version: &quot;1.0&quot;
+  description: &quot;Analyze and categorize files by type&quot;
+  dependencies: [&quot;python-magic&quot;]
+  readme: &quot;&quot;
+  scan_type: [&quot;exemplar&quot;, &quot;candidate&quot;]
+  target: &quot;root&quot;
+  entry: &quot;file_analyzer&quot;
+  active: True
+
+arguments:
+  file_analyzer:
+    - name: &quot;input_path&quot;
+      flag: null
+      type: &quot;Path&quot;
+      help: &quot;Directory to analyze&quot;
+      required: True
+    - name: &quot;output_path&quot;
+      flag: &quot;--out&quot;
+      type: &quot;Path&quot;
+      help: &quot;Output directory&quot;
+      required: True
+    - name: &quot;recursive&quot;
+      flag: &quot;--recursive&quot;
+      type: &quot;bool&quot;
+      help: &quot;Scan subdirectories&quot;
+      set: True
+    - name: &quot;min_size&quot;
+      flag: &quot;--min-size&quot;
+      type: &quot;int&quot;
+      default: 0
+      help: &quot;Minimum file size in bytes&quot;
+      required: False
+      set: False
+</code></pre>
+<h3>file_analyzer.py</h3>
+<pre><code class="language-python">#!/usr/bin/env python3
+&quot;&quot;&quot;File analyzer module.&quot;&quot;&quot;
+
+import argparse
+import csv
+from pathlib import Path
+
+from mars.report_modules.progress_interface import get_progress
+
+
+def main() -&gt; None:
+    &quot;&quot;&quot;Analyze files and generate report.&quot;&quot;&quot;
+    parser = argparse.ArgumentParser(description=&quot;Analyze files&quot;)
+    parser.add_argument(&quot;input_path&quot;, type=Path)
+    parser.add_argument(&quot;--out&quot;, type=Path, required=True)
+    parser.add_argument(&quot;--recursive&quot;, action=&quot;store_true&quot;)
+    parser.add_argument(&quot;--min-size&quot;, type=int, default=0)
+
+    args = parser.parse_args()
+
+    # Find files
+    pattern = &quot;**/*&quot; if args.recursive else &quot;*&quot;
+    files = [f for f in args.input_path.glob(pattern)
+             if f.is_file() and f.stat().st_size &gt;= args.min_size]
+
+    # Set up progress
+    progress = get_progress()
+    if progress:
+        progress.set_total(len(files))
+
+    # Process files
+    results = []
+    for file in files:
+        results.append({
+            &quot;path&quot;: str(file.relative_to(args.input_path)),
+            &quot;size&quot;: file.stat().st_size,
+            &quot;suffix&quot;: file.suffix,
+        })
+
+        if progress:
+            progress.advance()
+
+    # Write output
+    output_file = args.out / &quot;file_analysis.csv&quot;
+    with output_file.open(&quot;w&quot;, newline=&quot;&quot;) as f:
+        writer = csv.DictWriter(f, fieldnames=[&quot;path&quot;, &quot;size&quot;, &quot;suffix&quot;])
+        writer.writeheader()
+        writer.writerows(results)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+</code></pre>
+<h2>Testing Modules</h2>
+<p>Modules can be tested standalone by running them directly:</p>
+<pre><code class="language-bash"># Test with arguments
+python -m mars.report_modules.my_module.my_entry \
+    /path/to/input --out /path/to/output --verbose
+
+# Or if entry point is set up
+python src/mars/report_modules/my_module/my_entry.py \
+    /path/to/input --out /path/to/output
+</code></pre>
+<p>When running standalone, <code>get_progress()</code> returns <code>None</code>, so progress reporting is safely skipped.</p>
+<h2>Troubleshooting</h2>
+<h3>Module not running</h3>
+<ol>
+<li>Check <code>active: True</code> in mars_module.yaml</li>
+<li>Verify <code>scan_type</code> includes the scan type you're running</li>
+<li>Check for validation errors in debug mode</li>
+</ol>
+<h3>Target not found</h3>
+<ol>
+<li>Verify the target name matches a catalog entry exactly</li>
+<li>For custom targets, ensure the path pattern matches files in the scan</li>
+</ol>
+<h3>Arguments not working</h3>
+<ol>
+<li>Ensure argument names in YAML match argparse definitions</li>
+<li>Check <code>flag</code> is <code>null</code> for positional args</li>
+<li>For boolean flags, use <code>set: True</code> to include them</li>
+</ol>
+<h3>Progress not showing</h3>
+<ol>
+<li>Import <code>get_progress</code> from <code>mars.report_modules.progress_interface</code></li>
+<li>Always check <code>if progress:</code> before calling methods</li>
+<li>Call <code>set_total()</code> before <code>advance()</code> for determinate progress</li>
+</ol>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,62 @@
+module_info:
+  name: Firefox Cache Parser
+  report_folder_name: Firefox Cache
+  version: '1.0'
+  description: Parses Firefox cache files and creates CSV and optionally dumps bodies
+    as files (jpg, html, etc.) or symlinks.
+  dependencies: []
+  readme: ''
+  scan_type:
+  - exemplar
+  target: Firefox Cache
+  entry: ff_cache_parser
+  active: true
+arguments:
+  ff_cache_parser:
+  - name: input_path
+    flag: null
+    type: Path
+    default: null
+    help: Input directory containing cache2 entries
+    required: true
+    value: null
+  - name: output_path
+    flag: --out
+    type: Path
+    default: null
+    help: Output directory
+    required: true
+    value: null
+  - name: index_file
+    flag: --index-file
+    default: null
+    type: Path
+    help: Explicit path to the Firefox cache index file (defaults to INDIR/index)
+    required: false
+    set: false
+    value: null
+  - name: journal_file
+    flag: --journal-file
+    type: Path
+    help: Explicit path to index.log (journal) (defaults to INDIR/index.log)
+    required: false
+    set: false
+    value: null
+  - name: dump_bodies
+    flag: --dump-bodies
+    type: bool
+    help: When set, write decoded response bodies to firefox_cache_bodies/
+    required: false
+    set: true
+  - name: dump_mode
+    flag: --dump-mode
+    choices:
+    - copy
+    - link
+    type: str
+    default: copy
+    help: 'When dumping bodies, either copy bytes or create symlinks back to the original
+      cache entry (default: copy)'
+    required: false
+    set: true
+    value: copy

@@ -1,0 +1,28 @@
+module_info:
+  name: Biome SEGB Parser
+  report_folder_name: Biome
+  version: '1.0'
+  description: Parses macOS Biome SEGB files and extracts timestamps and data records
+  dependencies: []
+  readme: ''
+  scan_type:
+  - exemplar
+  target: Biome Streams
+  entry: biome_parser
+  active: true
+arguments:
+  biome_parser:
+  - name: input_path
+    flag: null
+    type: Path
+    default: null
+    help: Input directory containing Biome stream files
+    required: true
+    value: null
+  - name: output_path
+    flag: --out
+    type: Path
+    default: null
+    help: Output directory
+    required: true
+    value: null

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Biome SEGB Parser - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#report_modules" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Biome SEGB Parser</h1>
+<p>This module parses macOS Biome SEGB (Sequential Event Grid Block) files to extract system telemetry and application metrics.</p>
+<h2>Disclaimer</h2>
+<p><strong>This report is for informational and investigative purposes only.</strong> The data presented should be
+independently verified before being relied upon for any legal, regulatory, or evidentiary purpose.</p>
+<h3>Limitations</h3>
+<ul>
+<li><strong>Protobuf decoding</strong>: Apple does not publish Biome protobuf schemas. Decoding attempts are
+best-effort and may yield incomplete or incorrectly interpreted data.</li>
+<li><strong>Bundle ID extraction</strong>: Bundle identifiers (e.g., <code>com.apple.*</code>) are extracted using pattern
+matching heuristics. Some records may have missing or incorrectly parsed bundle IDs.</li>
+<li><strong>Binary data interpretation</strong>: Non-protobuf binary data is presented as hex dumps with attempted
+text extraction. Interpretation requires domain knowledge of specific Biome stream types.</li>
+<li><strong>Timestamp formats</strong>: Biome timestamps use Mac Absolute Time (seconds since 2001-01-01).
+Conversion accuracy depends on timezone assumptions.</li>
+<li><strong>Stream coverage</strong>: Not all Biome stream types are fully understood. Some streams may contain
+data that cannot be meaningfully parsed.</li>
+</ul>
+<h2>What Are Biome Files?</h2>
+<p>Biome is Apple's system telemetry framework introduced in macOS 12 (Monterey). It records
+application usage, system events, and device metrics in binary SEGB format files stored under <code>~/Library/Biome/</code>.</p>
+<p>Forensically relevant data includes:</p>
+<ul>
+<li>Application launch/termination events</li>
+<li>Device wake/sleep cycles</li>
+<li>Location context changes</li>
+<li>Intents and Siri interactions</li>
+<li>Media playback events</li>
+</ul>
+<h2>Parsed Data</h2>
+<h3>SEGB Records</h3>
+<p>Each SEGB file contains a stream of timestamped records. The parser extracts:</p>
+<ul>
+<li><strong>Timestamps</strong>: Two timestamp fields per record (typically event start/end or creation/modification)</li>
+<li><strong>Bundle ID</strong>: Application identifier when present (e.g., <code>com.apple.Safari</code>)</li>
+<li><strong>Stream type</strong>: v1 or v2 format indicator</li>
+<li><strong>State flags</strong>: Record state metadata</li>
+<li><strong>Protobuf content</strong>: Decoded protobuf fields when parsing succeeds</li>
+<li><strong>Raw data</strong>: Hex dump and extracted text for manual analysis</li>
+</ul>
+<h3>Empty Record Detection</h3>
+<p>Records containing only null bytes are flagged as empty and can be filtered during analysis.</p>
+<h2>Data Sources</h2>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Path Pattern</th>
+<th>macOS Versions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Biome Streams</td>
+<td><code>~/Library/Biome/streams/**/*.segb</code></td>
+<td>12.0+ (Monterey)</td>
+</tr>
+<tr>
+<td>Biome Streams</td>
+<td><code>~/Library/Biome/streams/**/*store</code></td>
+<td>12.0+</td>
+</tr>
+</tbody>
+</table>
+<p>Common stream locations include:</p>
+<ul>
+<li><code>public/</code> - General system telemetry</li>
+<li><code>restricted/</code> - Privacy-sensitive metrics (requires elevated access)</li>
+</ul>
+<h2>Not Currently Parsed</h2>
+<ul>
+<li><strong>Protobuf schema mapping</strong>: Without Apple's schemas, field names and types are inferred</li>
+<li><strong>Biome database files</strong>: SQLite databases in Biome directories are not parsed by this module</li>
+<li><strong>Restricted streams</strong>: Some streams require root access and may not be available from standard extractions</li>
+</ul>
+<h2>Output Files</h2>
+<ul>
+<li><code>biome_records.csv</code> - All extracted records with the following columns:</li>
+<li><code>source_file</code> - Path to source SEGB file</li>
+<li><code>bundle_id</code> - Extracted application bundle identifier</li>
+<li><code>stream_type</code> - v1 or v2 format</li>
+<li><code>offset</code> - Byte offset in source file</li>
+<li><code>metadata_offset</code> - Metadata section offset</li>
+<li><code>state</code> - Record state flags</li>
+<li><code>timestamp1</code>, <code>timestamp2</code> - Extracted timestamps (ISO 8601)</li>
+<li><code>data_size</code> - Raw data length in bytes</li>
+<li><code>data_text</code> - Decoded text content</li>
+<li><code>data_hex</code> - Hexadecimal data dump</li>
+<li><code>protobuf_json</code> - Decoded protobuf as JSON (when successful)</li>
+<li><code>protobuf_strings</code> - Extracted string fields from protobuf</li>
+</ul>
+<h2>Dependencies</h2>
+<p>This module requires the <code>ccl_segb</code> library for SEGB file parsing.</p>
+<h2>Scan Type</h2>
+<p><strong>Exemplar only</strong> - This module runs during live system scans to capture current Biome state. It is
+not used for carved/recovered file processing.</p>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1244 @@
+---
+catalog_metadata:
+  version: 2.5.0
+  created: '2025-05-16'
+  updated: '2025-12-15'
+
+skip_databases:
+  geoservices:
+    name: GeoServices / Location Services Cache
+    reason: Read-only Apple system cache for location/mapping data
+    table_patterns:
+      - GeoPlaces
+      - GeoLookup_*
+      - RKTimeZone
+      - GeoPlaceNames
+    description: Geographic lookup tables in 30+ languages, timezone data, map tiles
+    notes: Contains no user activity or forensically relevant data
+
+accounts:
+  - name: Accounts Database
+    glob_pattern: 'Users/*/Library/Accounts/Accounts*.sqlite'
+    file_type: database
+    scope: user
+    description: Accounts database. Trailing number changes based on version.
+    ignorable_tables:
+      - Z_METADATA
+      - Z_PRIMARYKEY
+      - Z_MODELCACHE
+      - ZACCESSOPTIONSKEY
+    exemplar_pattern: databases/catalog/Accounts Database*
+
+  - name: Personalization Portrait Database
+    glob_pattern: 'Users/*/Library/PersonalizationPortrait/PPSQLDatabase.db'
+    file_type: database
+    scope: user
+    description: User personalization and profiling database
+    notes: Used for personalized suggestions and features across macOS
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Personalization Portrait Database*
+
+airdrop:
+  - name: AirDrop Hash
+    glob_pattern: 'Users/*/Library/Sharing/AirDropHashDB/AirDropHashDB.*'
+    description: AirDrop transfer history
+    scope: user
+    has_archives: false
+    file_type: log
+    exemplar_pattern: logs/AirDrop Hash*
+
+  - name: AirDrop Database
+    glob_pattern: 'Users/*/Library/Application Support/com.apple.sharingd/com.apple.sharingd.db'
+    file_type: database
+    description: AirDrop transfer history
+    scope: user
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/AirDrop Database*
+
+airport_preferences:
+  - name: WiFi Known Networks (Airport legacy)
+    glob_pattern: 'Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist'
+    scope: system
+    description: System-level known networks, preferred order, per-network metadata (≤ Catalina).
+    file_type: log
+    notes: Keys often include KnownNetworks, PreferredOrder, UpdateHistory, Version, and per-network SSID/BSSID/router/IP/lease fields.
+    exemplar_pattern: logs/WiFi Known Networks (Airport legacy)*
+
+  - name: Wi-Fi Known Networks (new)
+    glob_pattern: 'Library/Preferences/com.apple.wifi.known-networks.plist'
+    scope: system
+    description: System-level known networks.
+    file_type: log
+    notes: Supersedes com.apple.airport.preferences.plist on 11+; structure differs but contains similar semantics.
+    exemplar_pattern: logs/Wi-Fi Known Networks (new)*
+
+apple_system_logs:
+  - name: Apple System Log (ASL)
+    scope: system
+    file_type: log
+    glob_pattern: 'private/var/log/asl/*.asl'
+    description: Apple System Log database files
+    notes: Custom binary format starting with 'ASL DB' - deprecated after 10.11
+    exemplar_pattern: logs/Apple System Log (ASL)*
+
+  - name: Diagnostic Messages ASL
+    scope: system
+    file_type: log
+    glob_pattern: 'private/var/log/DiagnosticMessages/*.asl'
+    description: Diagnostic message ASL files
+    notes: Part of legacy ASL system
+    exemplar_pattern: logs/Diagnostic Messages ASL*
+
+  - name: Power Management ASL
+    glob_pattern: 'private/var/powermanagement/*.asl'
+    file_type: log
+    scope: system
+    description: Power management event logs in ASL format
+    notes: Tracks power events, sleep/wake cycles
+    exemplar_pattern: databases/catalog/Power Management ASL*
+
+authentication:
+  - name: Authentication Database
+    glob_pattern: 'private/var/db/auth.db'
+    file_type: database
+    scope: system
+    description: System authentication and authorization database
+    ignorable_tables: []
+    notes: Contains authorization rules and rights for system operations
+    exemplar_pattern: databases/catalog/Authentication Database*
+
+biome:
+  - name: Biome Streams
+    primary:
+      glob_pattern: 'Users/*/Library/Biome/streams/restricted/*/*/*'
+    description: Biome unified logging framework data
+    file_type: cache
+    scope: user
+    archives:
+      - name: Archives
+        subpath: ''
+        pattern: '*.ZIP'
+        forensic_note: Files may have ZIP extension
+        combine_strategy: decompress_only
+    notes: Binary segmented store format - requires SEGB parsing
+    exemplar_pattern: caches/Biome Streams*
+
+  - name: Biome Databases 1
+    glob_pattern: 'Users/*/Library/Biome/databases/*/*.sqlite3'
+    file_type: database
+    description: Biome unified logging framework data
+    scope: user
+    notes: Binary segmented store format - requires SEGB parsing. Multiple variant files (e.g., Entity.sqlite3 and Entity-fullRebuild.sqlite3) are combined.
+    exemplar_pattern: databases/catalog/Biome Databases 1*
+
+  - name: Biome Databases 2
+    glob_pattern: 'private/var/db/biome/*/*.db'
+    file_type: database
+    scope: system
+    description: Biome unified logging framework data
+    notes: Binary segmented store format - requires SEGB parsing
+    exemplar_pattern: databases/catalog/Biome Databases 2*
+
+bluetooth:
+  - name: Bluetooth Devices
+    scope: system
+    file_type: log
+    glob_pattern: '/Library/Bluetooth/Library/Preferences/com.apple.MobileBluetooth.devices.plist'
+    description: Paired or connected Bluetooth devices
+    notes: ''
+    exemplar_pattern: logs/Bluetooth Devices*
+
+calendar:
+  - name: Calendar Cache
+    glob_pattern: 'Users/*/Library/Calendars/Calendar Cache'
+    file_type: database
+    scope: user
+    description: Calendar app event cache
+    ignorable_tables: []
+    notes: 'Superceded by Biome for newer versions'
+    exemplar_pattern: databases/catalog/Calendar Cache*
+
+  - name: Calendar Database
+    glob_pattern: 'Users/*/Library/group Containers/group.com.apple.Calendar/Calendar.sqlitedb'
+    file_type: database
+    scope: user
+    description: Calendar app event cache
+    ignorable_tables: []
+    notes: Scanner automatically searches Containers subdirectories for sandboxed instances.
+    exemplar_pattern: databases/catalog/Calendar Cache*
+
+calls:
+  - name: Call History Database
+    glob_pattern: 'Users/*/Library/Application Support/CallHistoryDB/CallHistory.storedata'
+    file_type: database
+    description: Call history
+    scope: user
+    ignorable_tables:
+      - Z_PRIMARYKEY
+      - Z_METADATA
+    exemplar_pattern: databases/catalog/Call History Database*
+
+cfurl_cache:
+  - name: CFURL Cache Database
+    glob_pattern: 'Users/*/Library/Caches/**/Cache.db'
+    file_type: database
+    scope: user
+    description: CoreFoundation URL cache - used by Safari and many macOS apps
+    has_archives: false
+    ignorable_tables:
+      - cfurl_cache_schema_version
+    notes: Contains cached web content from Safari and other apps using CFNetwork.
+    exemplar_pattern: databases/catalog/CFURL Cache Database*
+
+chrome:
+  - name: Chrome History
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/History'
+    file_type: database
+    scope: user
+    multi_profile: true  # Last /*/ is browser profile - do not combine across profiles
+    description: Chrome browsing history, downloads, and search terms
+    ignorable_tables:
+      - meta
+    notes: Primary Chrome history database - also check other profiles (Profile 1, Profile 2, etc.)
+    exemplar_pattern: databases/catalog/Chrome History*
+
+  - name: Chrome Login Data
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Login Data'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Chrome saved login credentials (encrypted)
+    ignorable_tables:
+      - meta
+    notes: Contains encrypted passwords - requires decryption key from Keychain
+    exemplar_pattern: databases/catalog/Chrome Login Data*
+
+  - name: Chrome Web Data
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Web Data'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Chrome autofill data and form history
+    ignorable_tables:
+      - meta
+    exemplar_pattern: databases/catalog/Chrome Web Data*
+
+  - name: Chrome Shortcuts
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Shortcuts'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Chrome URL autofill data
+    ignorable_tables:
+      - meta
+    exemplar_pattern: databases/catalog/Chrome Shortcuts*
+
+  - name: Chrome Cookies
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Cookies'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Chrome cookies database
+    ignorable_tables:
+      - meta
+    exemplar_pattern: databases/catalog/Chrome Cookies*
+
+  - name: Chrome Databases
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/databases/Databases.db'
+    file_type: database
+    description: Chrome database database
+    ignorable_tables:
+      - meta
+    scope: user
+    multi_profile: true
+    exemplar_pattern: databases/catalog/Chrome Databases*
+
+  - name: Chrome Favicons
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Favicons'
+    file_type: database
+    scope: user
+    multi_profile: true
+    ignorable_tables:
+      - meta
+    description: Chrome favicon cache
+    exemplar_pattern: databases/catalog/Chrome Favicons*
+
+  - name: Chrome Top Sites
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Top Sites'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Chrome top sites and thumbnails
+    ignorable_tables:
+      - meta
+    exemplar_pattern: databases/catalog/Chrome Top Sites*
+
+  - name: Chrome Media History
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Media History'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Chrome top sites and thumbnails
+    ignorable_tables:
+      - meta
+    exemplar_pattern: databases/catalog/Chrome Media History*
+
+  - name: Chrome Application Cache
+    glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/Application Cache/Index'
+    description: Chrome cache database (legacy)
+    ignorable_tables:
+      - meta
+    scope: user
+    multi_profile: true
+    exemplar_pattern: databases/catalog/Chrome Application Cache*
+
+  - name: Chromium Edge History
+    glob_pattern: 'Users/*/Library/Application Support/Microsoft Edge/*/History'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Microsoft Edge (Chromium) browsing history
+    ignorable_tables: []
+    notes: Edge uses Chromium engine - same schema as Chrome
+    exemplar_pattern: databases/catalog/Chromium Edge History*
+
+contacts:
+  - name: Contacts Database
+    glob_pattern: 'Users/*/Library/Application Support/AddressBook/*.abcddb'
+    file_type: database
+    scope: user
+    description: Contacts app database
+    ignorable_tables: []
+    notes: Version number in filename varies by macOS version. Found in main Library and app Containers. Scanner automatically searches Containers subdirectories.
+    exemplar_pattern: databases/catalog/Contacts Database*
+
+  - name: Contact Interactions
+    glob_pattern: 'private/var/db/CoreDuet/People/interactionC.db'
+    file_type: database
+    scope: system
+    description: Interaction history tracked by CoreDuet
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Contact Interactions*
+
+coreroutine:
+  - name: CoreRoutine Cache
+    glob_pattern: 'private/var/folders/*/*/0/com.apple.routined/dv/Cache/Cache.sqlite'
+    file_type: database
+    scope: system
+    description: CoreRoutine learned locations and behavior patterns cache
+    ignorable_tables:
+      - Z_METADATA
+      - Z_PRIMARYKEY
+      - Z_MODELCACHE
+    notes: Tracks learned locations (home, work, frequently visited places), transitions between locations, WiFi fingerprints for location tracking, and vehicle events.
+    exemplar_pattern: databases/catalog/CoreRoutine Cache*
+
+  - name: CoreRoutine Local
+    glob_pattern: 'private/var/folders/*/*/0/com.apple.routined/dv/Cache/Local.sqlite'
+    file_type: database
+    scope: system
+    description: CoreRoutine local device data and predictions
+    ignorable_tables:
+      - Z_METADATA
+      - Z_PRIMARYKEY
+      - Z_MODELCACHE
+    notes: Local predictions of user behavior patterns and location-based predictions.
+    exemplar_pattern: databases/catalog/CoreRoutine Local*
+
+  - name: CoreRoutine Cloud
+    glob_pattern: 'private/var/folders/*/*/0/com.apple.routined/dv/Cache/Cloud*.sqlite'
+    file_type: database
+    scope: system
+    description: CoreRoutine iCloud-synced location data
+    ignorable_tables:
+      - Z_METADATA
+      - Z_PRIMARYKEY
+      - Z_MODELCACHE
+    notes: Cloud-synced location data across devices. Contains CloudKit record fields (ZCKRECORDID, ZCKRECORDSYSTEMFIELDS) for cross-device correlation.
+    exemplar_pattern: databases/catalog/CoreRoutine Cloud*
+
+  - name: CoreRoutine Cache (legacy)
+    glob_pattern: 'private/var/folders/*/*/0/com.apple.routined/Cache/Cache.sqlite'
+    file_type: database
+    scope: system
+    description: CoreRoutine learned locations and behavior patterns cache
+    ignorable_tables:
+      - Z_METADATA
+      - Z_PRIMARYKEY
+      - Z_MODELCACHE
+    notes: Tracks learned locations (home, work, frequently visited places), transitions between locations, WiFi fingerprints for location tracking, and vehicle events.
+    exemplar_pattern: databases/catalog/CoreRoutine Cache*
+
+  - name: CoreRoutine Local (legacy)
+    glob_pattern: 'private/var/folders/*/*/0/com.apple.routined/Cache/Local.sqlite'
+    file_type: database
+    scope: system
+    description: CoreRoutine local device data and predictions
+    ignorable_tables:
+      - Z_METADATA
+      - Z_PRIMARYKEY
+      - Z_MODELCACHE
+    notes: Local predictions of user behavior patterns and location-based predictions.
+    exemplar_pattern: databases/catalog/CoreRoutine Local*
+
+  - name: CoreRoutine Cloud (legacy)
+    glob_pattern: 'private/var/folders/*/*/0/com.apple.routined/Cache/Cloud*.sqlite'
+    file_type: database
+    scope: system
+    description: CoreRoutine iCloud-synced location data
+    ignorable_tables:
+      - Z_METADATA
+      - Z_PRIMARYKEY
+      - Z_MODELCACHE
+    notes: Cloud-synced location data across devices. Contains CloudKit record fields (ZCKRECORDID, ZCKRECORDSYSTEMFIELDS) for cross-device correlation.
+    exemplar_pattern: databases/catalog/CoreRoutine Cloud*
+
+devices:
+  - name: Device List
+    glob_pattern: '/Users/*/Library/Application Support/com.apple.akd/devicelist.db'
+    file_type: database
+    description: Device list database used by Apple Keychain Daemon
+    ignorable_tables: []
+    scope: user
+    notes: SQLite database containing device information
+    exemplar_pattern: databases/catalog/Device List*
+
+dhcp_lease:
+  - name: DHCP Leases
+    glob_pattern: 'private/var/db/dhcpclient/leases/*'
+    file_type: log
+    scope: system
+    description: Per-interface DHCP lease files (IP address, router IP/MAC, lease start/length).
+    notes: Look for en0 leases around suspected events; ties to specific BSSID/router MAC.
+    exemplar_pattern: logs/DHCP Leases*
+
+discord:
+  - name: Discord Local Storage
+    glob_pattern: 'Users/*/Library/Application Support/discord/Local Storage/leveldb'
+    file_type: cache
+    description: Discord local data storage
+    scope: user
+    notes: LevelDB format, not SQLite
+    exemplar_pattern: caches/Discord Local Storage*
+
+eapol:
+  - name: EAPOL Client (per-user)
+    glob_pattern: 'Users/*/Library/Preferences/com.apple.eapolclient.plist'
+    description: User 802.1X/EAPOL profiles (enterprise Wi-Fi details).
+    file_type: log
+    scope: user
+    notes: Rarely needed for home/hotspot, but valuable on enterprise networks.
+    exemplar_pattern: logs/EAPOL Client (per-user)*
+
+  - name: EAPOL Client (system)
+    glob_pattern: 'Library/Preferences/SystemConfiguration/com.apple.eapolclient.plist'
+    scope: system
+    description: System 802.1X/EAPOL configuration.
+    file_type: log
+    notes: Complements per-user EAPOL data.
+    exemplar_pattern: logs/EAPOL Client (system)*
+
+facebook_messenger:
+  - name: Facebook Lightspeed Database
+    glob_pattern: '/Users/*/Library/Group Containers/group.com.facebook.Messenger/Library/Application Support/lightspeed-userDatabases/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*.db'
+    file_type: database
+    description: Facebook Messenger local database (Lightspeed)
+    scope: user
+    ignorable_tables: []
+    notes: SQLite databases used by Facebook Messenger and WhatsApp (?)
+    exemplar_pattern: databases/catalog/Facebook Lightspeed Database*
+
+  - name: Facebook Messenger Database
+    glob_pattern: '/Users/*/Library/Group Containers/group.com.facebook.Messenger/Library/Application Support/lightspeed-TAMStorage/echo/AdvancedCrypto/*/fts.db'
+    file_type: database
+    scope: user
+    description: Facebook Messenger local database (TAMStorage)
+    ignorable_tables: []
+    notes: SQLite databases used by Facebook Messenger
+    exemplar_pattern: databases/catalog/Facebook Messenger Database*
+
+firefox:
+  - name: Firefox Places
+    glob_pattern: 'Users/*/Library/Application Support/Firefox/Profiles/*/places.sqlite'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Firefox bookmarks, downloads, and browsing history
+    ignorable_tables: []
+    notes: Unified database for history and bookmarks
+    exemplar_pattern: databases/catalog/Firefox Places*
+
+  - name: Firefox Cookies
+    glob_pattern: 'Users/*/Library/Application Support/Firefox/Profiles/*/cookies.sqlite'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Firefox cookies
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Firefox Cookies*
+
+  - name: Firefox Favicons
+    glob_pattern: 'Users/*/Library/Application Support/Firefox/Profiles/*/favicons.sqlite'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Firefox favicon data
+    ignorable_tables: []
+    notes: Older versions used different favicon storage methods
+    exemplar_pattern: databases/catalog/Firefox Favicons*
+
+  - name: Firefox Form History
+    glob_pattern: 'Users/*/Library/Application Support/Firefox/Profiles/*/formhistory.sqlite'
+    file_type: database
+    scope: user
+    multi_profile: true
+    description: Firefox form autofill history
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Firefox Form History*
+
+  - name: Firefox Cache
+    glob_pattern: 'Users/*/Library/Caches/Firefox/Profiles/*/cache2/*'
+    file_type: cache
+    scope: user
+    multi_profile: true
+    has_archives: false
+    description: Firefox cache
+    exemplar_pattern: caches/Firefox Cache*
+
+  - name: Firefox LZ4
+    glob_pattern: 'Users/*/Library/Application Support/Firefox/Profiles/*/*.mozlz4'
+    exemplar_pattern: caches/Firefox LZ4*
+    scope: user
+    multi_profile: true
+    has_archives: false
+    file_type: cache
+    description: Firefox cache
+
+  - name: Firefox LZ4
+    glob_pattern: 'Users/*/Library/Application Support/Firefox/Profiles/*/*.jsonlz4'
+    exemplar_pattern: caches/Firefox LZ4*
+    scope: user
+    multi_profile: true
+    has_archives: false
+    file_type: cache
+    description: Firefox cache
+
+fsevents:
+  - name: FSEvents (BigSur+)
+    scope: system
+    file_type: log
+    glob_pattern: '/System/Volumes/Data/.fseventsd/*'
+    description: Apple File System Events
+    exemplar_pattern: logs/FSEvents (BigSur+)*
+
+  - name: FSEvents (Legacy)
+    scope: system
+    file_type: log
+    glob_pattern: '/.fseventsd/*'
+    description: Apple File System Events
+    exemplar_pattern: logs/FSEvents (Legacy)*
+
+gatekeeper:
+  - name: Gatekeeper SystemPolicy (db)
+    glob_pattern: 'private/var/db/SystemPolicy'
+    scope: system
+    escription: Gatekeeper's app system policies (db)
+    ignorable_tables: []
+    file_type: database
+    exemplar_pattern: databases/catalog/Gatekeeper SystemPolicy (db)*
+
+  - name: Gatekeeper SystemPolicy (spc)
+    glob_pattern: 'private/var/db/SystemPolicyConfiguration/SystemPolicy'
+    scope: system
+    description: Gatekeeper's app system policies (spc)
+    ignorable_tables: []
+    file_type: database
+    exemplar_pattern: databases/catalog/Gatekeeper SystemPolicy (spc)*
+
+icloud:
+  - name: iCloud Docs - Client
+    glob_pattern: 'Users/*/Library/Application Support/CloudDocs/session/db/client.db'
+    file_type: database
+    scope: user
+    description: iCloud Docs - Client
+    ignorable_tables: []
+    notes: iCloud Docs - Uploads and Downloads
+    exemplar_pattern: databases/catalog/iCloud Docs - Client*
+
+  - name: iCloud Docs - Server
+    glob_pattern: 'Users/*/Library/Application Support/CloudDocs/session/db/server.db'
+    file_type: database
+    scope: user
+    description: iCloud Docs - Server
+    ignorable_tables: []
+    notes: iCloud Docs - Uploads and Downloads
+    exemplar_pattern: databases/catalog/iCloud Docs - Server*
+
+interactions:
+  - name: Knowledge Store Interactions
+    glob_pattern: 'Users/*/Library/Application Support/Knowledge/interactions.db'
+    file_type: database
+    scope: user
+    description: User interaction history tracked by CoreDuet
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Knowledge Store Interactions*
+
+keychains:
+  - name: User Keychains
+    scope: user
+    file_type: keychain
+    glob_pattern: 'Users/*/Library/Keychains/*.keychain-db'
+    description: User keychain databases containing encrypted credentials
+    notes: ENCRYPTED - Contains passwords, certificates, keys.
+    exemplar_pattern: keychains/User Keychains*
+
+  - name: System Keychain
+    scope: system
+    file_type: keychain
+    glob_pattern: 'Library/Keychains/System.keychain'
+    description: System-level keychain with root certificates and system credentials
+    notes: ENCRYPTED - System keychain. Older format than .keychain-db
+    exemplar_pattern: keychains/System Keychain*
+
+knowledge:
+  - name: Knowledge Store (CoreDuet User)
+    glob_pattern: 'Users/*/Library/Application Support/Knowledge/knowledgeC.db'
+    file_type: database
+    scope: user
+    description: CoreDuet knowledge database - tracks app usage, device connections, metadata
+    ignorable_tables: []
+    notes: App launches, screen time, device connections, air drops
+    exemplar_pattern: databases/catalog/Knowledge Store (CoreDuet User)*
+
+  - name: Knowledge Store (CoreDuet System)
+    glob_pattern: 'private/var/db/CoreDuet/Knowledge/knowledgeC.db'
+    file_type: database
+    scope: system
+    description: CoreDuet knowledge database - tracks app usage, device connections, metadata
+    ignorable_tables: []
+    notes: App launches, screen time, device connections, air drops
+    exemplar_pattern: databases/catalog/Knowledge Store (CoreDuet System)*
+
+  - name: CoreDuet System
+    glob_pattern: 'private/var/db/CoreDuet/coreduetd.db'
+    file_type: database
+    scope: system
+    description: CoreDuet database
+    ignorable_tables: []
+    notes: ''
+    exemplar_pattern: databases/catalog/CoreDuet System*
+
+legacy_text_logs:
+  - name: System Log
+    scope: system
+    file_type: log
+    has_archives: true
+    primary:
+      glob_pattern: 'private/var/log/system.log'
+    archives:
+      - name: Archives
+        subpath: ''
+        pattern: system.log.*.gz
+        forensic_note: ''
+    combine_strategy: decompress_and_concatenate
+    description: Legacy system log file (current + archives)
+    notes: Deprecated in favor of unified logging in 10.12+, but may still exist. Text format, not SQLite.
+    exemplar_pattern: logs/System Log*
+
+  - name: Install Log
+    glob_pattern: 'private/var/log/install.log'
+    scope: system
+    file_type: log
+    description: Software installation log
+    notes: Records software installations and updates
+    exemplar_pattern: logs/Install Log*
+
+location_cache:
+  - name: Location Cache 1
+    glob_pattern: 'private/var/folders/*/*/C/cache_encryptedA.db'
+    file_type: database
+    scope: system
+    description: WiFi location cache database
+    ignorable_tables:
+      - TableInfo
+    exemplar_pattern: databases/catalog/Location Cache 1*
+
+  - name: Location Cache 2
+    glob_pattern: 'private/var/folders/*/*/C/lockCache_encryptedA.db'
+    file_type: database
+    scope: system
+    description: WiFi lock location cache database
+    ignorable_tables:
+      - TableInfo
+    exemplar_pattern: databases/catalog/Location Cache 2*
+
+location_services:
+  - name: Location Services
+    scope: system
+    file_type: log
+    glob_pattern: 'private/var/db/locationd/clients.plist'
+    description: Apps that are registered to determine location
+    notes: ''
+    exemplar_pattern: logs/Location Services*
+
+mail:
+  - name: Mail Envelope Index
+    glob_pattern: 'Users/*/Library/Mail/V*/MailData/Envelope Index'
+    file_type: database
+    scope: user
+    description: Mail app message index and metadata
+    ignorable_tables: []
+    notes: V10, V9, etc. varies by macOS version
+    exemplar_pattern: databases/catalog/Mail Envelope Index*
+
+message_tracer:
+  - name: Wi-Fi Analytics (message tracer 1)
+    glob_pattern: 'Library/Preferences/com.apple.wifi.plist'
+    scope: system
+    description: PendingList snapshots; environment scans (RSSI, SNR, channel/band, wake_context).
+    file_type: log
+    notes: 'SSID often blank in some builds; rely on OUI/BSSID. Keys: PendingList, AssociationSSIDMap, InternalAssociationSSIDMap, LastSubmissionTimestamp.'
+    exemplar_pattern: logs/Wi-Fi Analytics (message tracer 1)*
+
+  - name: Wi-Fi Analytics (message tracer 2)
+    glob_pattern: 'Library/Preferences/SystemConfiguration/com.apple.wifi.message-tracer.plist'
+    scope: system
+    description: Variant/older naming for Wi-Fi analytics snapshots.
+    file_type: log
+    notes: Same semantic family as com.apple.wifi.plist; presence varies by build.
+    exemplar_pattern: logs/Wi-Fi Analytics (message tracer 2)*
+
+messages:
+  - name: iMessage-SMS Database
+    glob_pattern: 'Users/*/Library/Messages/chat.db'
+    file_type: database
+    scope: user
+    description: iMessage and SMS message history
+    ignorable_tables: []
+    notes: Contains all Messages app data including iMessage and SMS
+    exemplar_pattern: databases/catalog/iMessage-SMS Database*
+
+  - name: Message Entities
+    glob_pattern: 'Users/*/Library/Suggestions/entities.db'
+    file_type: database
+    scope: user
+    description: Message entities
+    ignorable_tables: []
+    notes: Message entities
+    exemplar_pattern: databases/catalog/Message Entities*
+
+  - name: Message Training
+    glob_pattern: 'Users/*/Library/Suggestions/training.db'
+    file_type: database
+    scope: user
+    description: Message
+    ignorable_tables: []
+    notes: Message
+    exemplar_pattern: databases/catalog/Message Training*
+
+  - name: Message Snippets
+    glob_pattern: 'Users/*/Library/Suggestions/snippets.db'
+    file_type: database
+    scope: user
+    description: Message
+    ignorable_tables: []
+    notes: Message
+    exemplar_pattern: databases/catalog/Message Snippets*
+
+  - name: Message Sync
+    glob_pattern: 'Users/*/Library/Messages/Sync/sync.db'
+    file_type: database
+    scope: user
+    description: Message
+    ignorable_tables: []
+    notes: Message
+    exemplar_pattern: databases/catalog/Message Sync*
+
+  - name: Messages Attachments
+    glob_pattern: 'Users/*/Library/Messages/Attachments/**/*'
+    scope: user
+    description: iMessage attachment files
+    notes: Not a database - file storage for message attachments
+    file_type: cache
+    exemplar_pattern: caches/Messages Attachments*
+
+network_interfaces:
+  - name: Network Hardware Interfaces (context)
+    glob_pattern: 'Library/Preferences/SystemConfiguration/NetworkInterfaces*.plist'
+    scope: system
+    description: Hardware ports and BSD names (en0, awdl0), device MACs.
+    file_type: log
+    notes: Correlate interface MAC with observed BSSIDs/leases.
+    exemplar_pattern: logs/Network Hardware Interfaces (context)*
+
+network_preferences:
+  - name: Network Services Mapping (context)
+    glob_pattern: 'Library/Preferences/SystemConfiguration/preferences*.plist'
+    scope: system
+    description: NetworkServices, hardware port mapping, service UUIDs.
+    file_type: log
+    notes: Useful to map en0/en1 to Wi-Fi interface and correlate with leases.
+    exemplar_pattern: logs/Network Services Mapping (context)*
+
+network_usage:
+  - name: Network Usage Database
+    glob_pattern: 'private/var/networkd/**/netusage.sqlite'
+    file_type: database
+    scope: system
+    description: Network data usage tracking by process
+    ignorable_tables: []
+    notes: Tracks data usage per application and process
+    exemplar_pattern: databases/catalog/Network Usage Database*
+
+notes:
+  - name: Notes Database
+    glob_pattern: 'Users/*/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite'
+    file_type: database
+    scope: user
+    description: Apple Notes app database
+    ignorable_tables: []
+    notes: Core Data SQLite database - complex schema
+    exemplar_pattern: databases/catalog/Notes Database*
+
+notifications:
+  - name: Notification Center Database (Legacy)
+    glob_pattern: 'Users/*/Library/Application Support/NotificationCenter/*.db'
+    file_type: database
+    scope: user
+    description: Notification Center history and settings
+    ignorable_tables: []
+    notes: Legacy location - moved in macOS Sequoia (15+)
+    exemplar_pattern: databases/catalog/Notification Center Database (Legacy)*
+
+  - name: Notification Center Database (Temp Folder)
+    glob_pattern: 'private/var/folders/*/*/0/com.apple.notificationcenter/db*/db'
+    file_type: database
+    scope: system
+    description: Notification Center database in temp folder
+    ignorable_tables: []
+    notes: 'Temporary folder location - path structure: /private/var/folders/<XX>/<random>/0/com.apple.notificationcenter/db2/db'
+    exemplar_pattern: databases/catalog/Notification Center Database (Temp Folder)*
+
+  - name: Notification Center Database (Sequoia)
+    glob_pattern: 'Users/*/Library/Group Containers/group.com.apple.usernoted/db*/db'
+    file_type: database
+    scope: user
+    description: Notification Center database - macOS Sequoia location
+    ignorable_tables: []
+    notes: New location in macOS Sequoia (15+) - moved to Group Container
+    exemplar_pattern: databases/catalog/Notification Center Database (Sequoia)*
+
+powerlog:
+  - name: Powerlog
+    file_type: database
+    scope: system
+    ignorable_tables:
+      - PLCoreStorage_schemaVersions
+    has_archives: true
+    primary:
+      glob_pattern: 'private/var/db/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL'
+    archives:
+      - name: Archives
+        subpath: Archives
+        pattern: '*'
+        forensic_note: Archived powerlogs
+      - name: Quarantine
+        subpath: Quarantine
+        pattern: '*'
+        forensic_note: Archived powerlogs
+    combine_strategy: decompress_and_merge
+    description: Battery and power usage logs (current + archives)
+    notes: PLSQL format - contains detailed power metrics.
+    exemplar_pattern: databases/catalog/Powerlog*
+
+quarantine:
+  - name: Quarantine Events
+    glob_pattern: 'Users/*/Library/Preferences/com.apple.LaunchServices.QuarantineEventsV2'
+    file_type: database
+    scope: user
+    description: Quarantine attribute tracking for downloaded files
+    ignorable_tables: []
+    notes: Tracks file downloads and their sources
+    exemplar_pattern: databases/catalog/Quarantine Events*
+
+quicklook:
+  - name: QuickLook Thumbnail Cache
+    file_type: database
+    glob_pattern: 'private/var/folders/*/*/*/com.apple.QuickLook.thumbnailcache/index.sqlite'
+    scope: system
+    description: Quarantine attribute tracking for downloaded files
+    ignorable_tables:
+      - preferences
+    notes: Thumbnail cache
+    exemplar_pattern: databases/catalog/QuickLook Thumbnail Cache*
+
+recent_items:
+  - name: Recent Items
+    scope: user
+    file_type: log
+    glob_pattern: 'Users/*/Library/Application Support/com.apple.sharedfilelist/*.sfl*'
+    description: Recent items lists (files, servers, applications)
+    notes: Binary plist format in recent versions, SQLite in older versions
+    exemplar_pattern: logs/Recent Items*
+
+  - name: Recent Application Documents
+    scope: user
+    file_type: log
+    glob_pattern: 'Users/*/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/*.sfl*'
+    description: Recent items lists (files, servers, applications)
+    notes: Binary plist format in recent versions
+    exemplar_pattern: logs/Recent Items*
+
+reminders:
+  - name: Reminders Database
+    glob_pattern: 'Users/*/Library/Reminders/Container_v1/Stores/*.sqlite'
+    file_type: database
+    scope: user
+    description: Reminders app database
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Reminders Database*
+
+  - name: Reminders Database (Sequoia)
+    glob_pattern: 'Users/*/Library/Group Containers/group.com.apple.reminders/Container_v1/Stores/*.sqlite'
+    file_type: database
+    scope: user
+    description: Reminders app database
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Reminders Database*
+
+safari:
+  - name: Safari History
+    glob_pattern: Users/*/Library/Safari/History.db
+    file_type: database
+    scope: user           # This keeps user-scoped DBs separate
+    has_archives: false
+    description: Safari browsing history with visits and items
+    ignorable_tables: []
+    notes: 'Primary Safari history database with URL visits and metadata.'
+    exemplar_pattern: databases/catalog/Safari History*
+
+  - name: Safari Favicon Cache
+    glob_pattern: 'Users/*/Library/Safari/Favicon Cache/favicons.db'
+    file_type: database
+    scope: user
+    has_archives: false
+    description: Safari favicon metadata and images
+    ignorable_tables: []
+    notes: Contains favicon data associated with visited sites
+    exemplar_pattern: databases/catalog/Safari Favicon Cache*
+
+  - name: Safari Per-Site Preferences
+    glob_pattern: 'Users/*/Library/Safari/PerSitePreferences.db'
+    file_type: database
+    scope: user
+    description: Site-specific Safari settings and preferences
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Safari Per-Site Preferences*
+
+  - name: Safari Tab Snapshots Metadata
+    glob_pattern: 'Users/*/Library/Safari/Caches/com.apple.Safari/TabSnapshots/metadata.db'
+    file_type: database
+    scope: user
+    description: Metadata for Safari tab snapshot thumbnails
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Safari Tab Snapshots Metadata*
+
+  - name: Safari Tabs Database
+    glob_pattern: 'Users/*/Library/Containers/com.apple.Safari/Data/Library/Safari/SafariTabs.db'
+    file_type: database
+    scope: user
+    has_archives: false
+    description: Safari currently open tabs and tab groups
+    ignorable_tables: []
+    notes: Safari 15+ - tracks open tabs, tab groups, and browsing session state
+    exemplar_pattern: databases/catalog/Safari Tabs Database*
+
+screen_time:
+  - name: Screen Time Application Usage
+    glob_pattern: 'Users/*/Library/Application Support/com.apple.ScreenTimeAgent/Store/RMAdminStore-Local.sqlite'
+    file_type: database
+    scope: user
+    ignorable_tables: []
+    description: Screen Time app usage tracking
+    exemplar_pattern: databases/catalog/Screen Time Application Usage*
+
+shell_history:
+  - name: Bash History
+    glob_pattern: 'Users/*/.bash_history'
+    scope: user
+    file_type: log
+    description: Bash shell command history
+    notes: Plain text file - contains user command history
+    exemplar_pattern: logs/Bash History*
+
+  - name: Zsh History
+    glob_pattern: 'Users/*/.zsh_history'
+    scope: user
+    file_type: log
+    description: Zsh shell command history
+    notes: Plain text file - Zsh became default shell in Catalina (10.15)
+    exemplar_pattern: logs/Zsh History*
+
+  - name: Zsh Sessions
+    glob_pattern: 'Users/*/.zsh_sessions/*'
+    scope: user
+    file_type: log
+    description: Zsh shell command history
+    notes: Plain text files - Zsh became default shell in Catalina (10.15)
+    exemplar_pattern: logs/Zsh Sessions*
+
+siri:
+  - name: Siri Remembers (kvstore)
+    glob_pattern: 'Users/*/Library/Group Containers/group.com.apple.siri.remembers/kvstore.sql3'
+    file_type: database
+    scope: user
+    description: Siri database
+    ignorable_tables: []
+    notes: Siri Remembers.
+    exemplar_pattern: databases/catalog/Siri Remembers (kvstore)*
+
+  - name: Siri Remembers (siriremembers)
+    glob_pattern: 'Users/*/Library/Group Containers/group.com.apple.siri.remembers/siriremembers*.sqlite3'
+    file_type: database
+    scope: user
+    description: Siri database
+    ignorable_tables: []
+    notes: Siri Remembers.
+    exemplar_pattern: databases/catalog/Siri Remembers (kvstore)*
+
+skype:
+  - name: Skype Calls
+    glob_pattern: 'Users/*/Library/Application Support/Skype/*/main.db'
+    file_type: database
+    scope: user
+    description: Skype desktop app local database
+    ignorable_tables:
+      - DataChannels
+    exemplar_pattern: databases/catalog/Skype Calls*
+
+slack:
+  - name: Slack Storage
+    glob_pattern: 'Users/*/Library/Application Support/Slack/storage/slack-*.db'
+    file_type: database
+    scope: user
+    description: Slack desktop app local database
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Slack Storage*
+
+spotlight:
+  - name: Spotlight Index (User v1)
+    glob_pattern: 'Users/*/Library/Metadata/CoreSpotlight/index.spotlightV3'
+    file_type: cache
+    scope: user
+    description: Spotlight search index database
+    notes: Complex binary format - not standard SQLite
+    exemplar_pattern: caches/Spotlight Index (User)*
+
+  - name: Spotlight Index (User v2)
+    glob_pattern: 'Users/*/Library/Metadata/CoreSpotlight/*/index.spotlightV3/*'
+    scope: user
+    description: Spotlight search index database
+    file_type: cache
+    notes: Complex binary format - not standard SQLite
+    exemplar_pattern: caches/Spotlight Index (User)*
+
+  - name: Spotlight Shortcuts
+    glob_pattern: 'Users/*/Library/Application Support/com.apple.spotlight/*'
+    scope: user
+    description: Spotlight search index database
+    file_type: cache
+    notes: Recent Spotlight shortcuts
+    exemplar_pattern: caches/Spotlight Shortcuts*
+
+  - name: Spotlight Volume Index
+    scope: system
+    file_type: cache
+    glob_pattern: '.Spotlight-V100/**/*'
+    description: Volume-level Spotlight metadata store
+    notes: Root-level Spotlight index - complex binary format with metadata for entire volume
+    exemplar_pattern: caches/Spotlight Volume Index*
+
+  - name: Spotlight Volume Index v2
+    scope: system
+    file_type: cache
+    glob_pattern: 'private/var/db/Spotlight-V100/*'
+    description: Volume-level Spotlight metadata store
+    notes: Root-level Spotlight index - complex binary format with metadata for entire volume
+    exemplar_pattern: caches/Spotlight Volume Index*
+
+  - name: Spotlight Volume Index v3
+    scope: system
+    file_type: cache
+    glob_pattern: 'private/var/db/Spotlight/*'
+    description: Volume-level Spotlight metadata store
+    notes: Root-level Spotlight index - complex binary format with metadata for entire volume
+    exemplar_pattern: caches/Spotlight Volume Index*
+
+system_policy:
+  - name: Exec Policy Database
+    glob_pattern: 'private/var/db/SystemPolicyConfiguration/ExecPolicy'
+    file_type: database
+    ignorable_tables:
+      - settings
+    scope: system
+    description: Exec Policy Database
+    exemplar_pattern: databases/catalog/Exec Policy Database*
+
+  - name: Kext Policy Database
+    glob_pattern: 'private/var/db/SystemPolicyConfiguration/KextPolicy'
+    file_type: database
+    ignorable_tables:
+      - settings
+    scope: system
+    description: Extension Policy Database
+    exemplar_pattern: databases/catalog/Kext Policy Database*
+
+tcc:
+  - name: TCC Database (System)
+    glob_pattern: 'Library/Application Support/com.apple.TCC/TCC.db'
+    file_type: database
+    scope: system
+    description: Transparency, Consent, and Control - system-wide permissions
+    ignorable_tables:
+      - admin
+    notes: Tracks app permissions (camera, microphone, location, etc.)
+    exemplar_pattern: databases/catalog/TCC Database (System)*
+
+  - name: TCC Database (User)
+    glob_pattern: 'Users/*/Library/Application Support/com.apple.TCC/TCC.db'
+    file_type: database
+    scope: user
+    description: Transparency, Consent, and Control - user-specific permissions
+    ignorable_tables:
+      - admin
+    notes: User-level app permissions
+    exemplar_pattern: databases/catalog/TCC Database (User)*
+
+unified_logs:
+  - name: Unified Log (All Diagnostics)
+    scope: system
+    file_type: log
+    glob_pattern: 'private/var/db/diagnostics/**/*'
+    preserve_structure: true
+    description: All unified logging system files including metadata
+    notes: Captures all diagnostic files beyond just tracev3. Structure preserved for logarchive parsers.
+    exemplar_pattern: logs/Unified Log (All Diagnostics)*
+
+uuid_text:
+  - name: UUID Text
+    scope: system
+    file_type: log
+    glob_pattern: 'private/var/db/uuidtext/**/*'
+    preserve_structure: true
+    description: UUID
+    notes: Captures all diagnostic files beyond just tracev3. Structure preserved for UUID lookups.
+    exemplar_pattern: logs/UUID Text*
+
+wifi_analytics:
+  - name: WiFi Log
+    scope: system
+    file_type: log
+    has_archives: true
+    primary:
+      glob_pattern: 'private/var/log/wifi.log'
+    archives:
+      - name: Archives
+        subpath: ''
+        pattern: wifi.log.*.bz2
+    combine_strategy: decompress_and_concatenate
+    description: WiFi connection and diagnostic log (current + archives)
+    notes: Plain text log file with WiFi events. Text format, not SQLite.
+    exemplar_pattern: logs/WiFi Log*
+
+  - name: WiFi Analytics Config
+    glob_pattern: 'private/var/db/analyticsd/config.sqlite'
+    description: WiFi analytics and diagnostics
+    file_type: database
+    notes: ''
+    exemplar_pattern: databases/catalog/WiFi Analytics Config*
+
+  - name: WiFi Analytics State
+    glob_pattern: 'private/var/db/analyticsd/state.sqlite'
+    description: WiFi analytics and diagnostics
+    file_type: database
+    notes: ''
+    exemplar_pattern: databases/catalog/WiFi Analytics State*
+
+  - name: Wi-Fi Analytics (explicit analytics file)
+    glob_pattern: 'Library/Preferences/com.apple.wifi.analytics.plist'
+    scope: system
+    description: Less common analytics container for Wi-Fi environment data.
+    file_type: log
+    notes: Not always present; include for completeness.
+    exemplar_pattern: logs/Wi-Fi Analytics (explicit analytics file)*
+
+  - name: WiFi Agent
+    glob_pattern: 'Users/*/Library/Preferences/com.apple.wifi.WiFiAgent.plist'
+    description: Wi-Fi Agent.
+    scope: user
+    file_type: log
+    notes: ''
+    exemplar_pattern: logs/WiFi Agent*
+
+zoom:
+  - name: Zoom Chat Database (legacy)
+    glob_pattern: 'Users/*/Library/Application Support/zoom.us/data/zTelephony.db'
+    file_type: database
+    scope: user
+    description: Zoom chat messages and call history
+    ignorable_tables: []
+    notes: Older Zoom version.
+    exemplar_pattern: databases/catalog/Zoom Chat Database (legacy)*
+
+  - name: Zoom Meeting Database (legacy)
+    glob_pattern: 'Users/*/Library/Application Support/zoom.us/data/zoommeeting.db'
+    file_type: database
+    scope: user
+    description: Zoom chat messages and call history
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Zoom Meeting Database (legacy)*
+
+  - name: Zoom Main Database (legacy)
+    glob_pattern: 'Users/*/Library/Application Support/zoom.us/data/zoomus.db'
+    file_type: database
+    scope: user
+    description: Zoom chat messages and call history
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Zoom Main Database (legacy)*
+
+  - name: Zoom Meeting Database
+    glob_pattern: 'Users/*/Library/Application Support/zoom.us/data/zoommeeting.*.db'
+    file_type: database
+    scope: user
+    description: Zoom chat messages and call history
+    notes: Now encrypted. Req page size 1024, KDF iter 4000, and base64 pw string from login keychain.
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Zoom Meeting Database*
+
+  - name: Zoom Main Database
+    glob_pattern: 'Users/*/Library/Application Support/zoom.us/data/zoomus.*.db'
+    file_type: database
+    scope: user
+    description: Zoom chat messages and call history
+    notes: Now encrypted. Req page size 1024, KDF iter 4000, and base64 pw string from login keychain.
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Zoom Main Database*
+
+  - name: Zoom User Database (asyn)
+    glob_pattern: '/Users/*/Library/Application Support/zoom.us/data/[a-z0-9]*@xmpp.zoom.us/[a-z0-9]*@xmpp.zoom.us.asyn.*.db'
+    file_type: database
+    scope: user
+    description: Zoom chat messages and call history
+    notes: Now encrypted. Req page size 1024, KDF iter 4000, and base64 pw string from login keychain.
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Zoom Usesr Database (asyn)*
+
+  - name: Zoom User Database (idx)
+    glob_pattern: '/Users/*/Library/Application Support/zoom.us/data/[a-z0-9]*@xmpp.zoom.us/[a-z0-9]*@xmpp.zoom.us.idx.*.db'
+    file_type: database
+    scope: user
+    description: Zoom chat messages and call history
+    notes: Now encrypted. Req page size 1024, KDF iter 4000, and base64 pw string from login keychain.
+    ignorable_tables: []
+    exemplar_pattern: databases/catalog/Zoom Usesr Database (idx)*
+

@@ -1,0 +1,233 @@
+name: Build dfvfs Wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python version to build for'
+        required: true
+        default: '3.13'
+        type: string
+
+env:
+  # All libyal packages required by dfvfs
+  LIBYAL_PACKAGES: >-
+    libbde-python
+    libcaes-python
+    libewf-python
+    libfcrypto-python
+    libfsapfs-python
+    libfsext-python
+    libfsfat-python
+    libfshfs-python
+    libfsntfs-python
+    libfsxfs-python
+    libfvde-python
+    libfwnt-python
+    libluksde-python
+    libmodi-python
+    libphdi-python
+    libqcow-python
+    libsigscan-python
+    libsmdev-python
+    libsmraw-python
+    libvhdi-python
+    libvmdk-python
+    libvsapm-python
+    libvsgpt-python
+    libvshadow-python
+    libvslvm-python
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-14  # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install build dependencies
+        run: |
+          brew install automake autoconf libtool pkg-config
+          brew install openssl@3 zlib bzip2 xz
+          pip install --upgrade pip wheel build
+
+      - name: Set build environment
+        run: |
+          echo "LDFLAGS=-L$(brew --prefix openssl@3)/lib -L$(brew --prefix zlib)/lib" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I$(brew --prefix openssl@3)/include -I$(brew --prefix zlib)/include" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Build pure Python packages
+        run: |
+          mkdir -p dist
+          pip wheel dfvfs dfdatetime dtfabric --no-deps -w dist/
+
+      - name: Build libyal wheels
+        run: |
+          for pkg in $LIBYAL_PACKAGES; do
+            echo "Building $pkg..."
+            pip wheel $pkg --no-deps -w dist/ || echo "Warning: Failed to build $pkg"
+          done
+
+      - name: Build pytsk3
+        run: |
+          # Install The Sleuth Kit
+          brew install sleuthkit
+          pip wheel pytsk3 --no-deps -w dist/ || echo "Warning: Failed to build pytsk3"
+
+      - name: Build xattr
+        run: |
+          pip wheel xattr --no-deps -w dist/
+
+      - name: Build PyYAML
+        run: |
+          pip wheel PyYAML --no-deps -w dist/
+
+      - name: List built wheels
+        run: ls -la dist/
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-arm64-py${{ inputs.python_version }}
+          path: dist/*.whl
+
+  build-macos-x86_64:
+    runs-on: macos-15-intel  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install build dependencies
+        run: |
+          brew install automake autoconf libtool pkg-config
+          brew install openssl@3 zlib bzip2 xz
+          pip install --upgrade pip wheel build
+
+      - name: Set build environment
+        run: |
+          echo "LDFLAGS=-L$(brew --prefix openssl@3)/lib -L$(brew --prefix zlib)/lib" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I$(brew --prefix openssl@3)/include -I$(brew --prefix zlib)/include" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Build pure Python packages
+        run: |
+          mkdir -p dist
+          pip wheel dfvfs dfdatetime dtfabric --no-deps -w dist/
+
+      - name: Build libyal wheels
+        run: |
+          for pkg in $LIBYAL_PACKAGES; do
+            echo "Building $pkg..."
+            pip wheel $pkg --no-deps -w dist/ || echo "Warning: Failed to build $pkg"
+          done
+
+      - name: Build pytsk3
+        run: |
+          brew install sleuthkit
+          pip wheel pytsk3 --no-deps -w dist/ || echo "Warning: Failed to build pytsk3"
+
+      - name: Build xattr
+        run: |
+          pip wheel xattr --no-deps -w dist/
+
+      - name: Build PyYAML
+        run: |
+          pip wheel PyYAML --no-deps -w dist/
+
+      - name: List built wheels
+        run: ls -la dist/
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-x86_64-py${{ inputs.python_version }}
+          path: dist/*.whl
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install build dependencies
+        run: |
+          pip install --upgrade pip wheel build
+
+      - name: Build pure Python packages
+        run: |
+          mkdir dist
+          pip wheel dfvfs dfdatetime dtfabric --no-deps -w dist/
+
+      - name: Build libyal wheels
+        shell: bash
+        run: |
+          for pkg in $LIBYAL_PACKAGES; do
+            echo "Building $pkg..."
+            pip wheel $pkg --no-deps -w dist/ || echo "Warning: Failed to build $pkg"
+          done
+
+      - name: Build pytsk3
+        run: |
+          pip wheel pytsk3 --no-deps -w dist/
+        continue-on-error: true
+
+      - name: Build PyYAML
+        run: |
+          pip wheel PyYAML --no-deps -w dist/
+
+      - name: List built wheels
+        run: dir dist
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-x64-py${{ inputs.python_version }}
+          path: dist/*.whl
+
+  package-wheels:
+    needs: [build-macos-arm64, build-macos-x86_64, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-wheels
+
+      - name: Organize wheels
+        run: |
+          mkdir -p organized/macos-arm64 organized/macos-x86_64 organized/windows-x64
+
+          # Copy macOS ARM64 wheels
+          cp all-wheels/wheels-macos-arm64-py*/*.whl organized/macos-arm64/ || true
+
+          # Copy macOS x86_64 wheels
+          cp all-wheels/wheels-macos-x86_64-py*/*.whl organized/macos-x86_64/ || true
+
+          # Copy Windows wheels
+          cp all-wheels/wheels-windows-x64-py*/*.whl organized/windows-x64/ || true
+
+          echo "=== macOS ARM64 ==="
+          ls -la organized/macos-arm64/
+          echo "=== macOS x86_64 ==="
+          ls -la organized/macos-x86_64/
+          echo "=== Windows x64 ==="
+          ls -la organized/windows-x64/
+
+      - name: Upload organized wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: dfvfs-wheels-all-platforms
+          path: organized/

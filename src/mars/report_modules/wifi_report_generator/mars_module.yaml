@@ -1,0 +1,66 @@
+module_info:
+  name: WiFi Report Generator
+  report_folder_name: wifi
+  version: '1.0'
+  description: Summarize Wi-Fi/network artefacts.
+  dependencies:
+  - pandas
+  readme: ''
+  scan_type:
+  - exemplar
+  - candidate
+  target: root
+  entry: wifi_report_manager
+  active: true
+arguments:
+  wifi_report_manager:
+  - name: input_path
+    flag: null
+    type: Path
+    default: null
+    help: Path to exemplar root or run directory
+    required: true
+    value: null
+  - name: output_path
+    flag: --out
+    default: null
+    type: Path
+    help: Output directory for reports
+    required: true
+    value: null
+  - name: pretty
+    flag: --pretty
+    type: bool
+    help: Pretty-print JSON output
+    required: false
+    set: true
+  - name: oui_map
+    flag: --oui-map
+    type: Path
+    help: Optional CSV mapping OUIs to vendor names
+    required: false
+    set: false
+    value: null
+  - name: presence_window
+    flag: --presence-window
+    type: int
+    default: 900
+    help: 'Seconds around each DHCP lease to correlate presence events (default: 900)'
+    required: false
+    set: false
+    value: null
+  - name: max_plist_mb
+    flag: --max-plist-mb
+    type: int
+    default: 50
+    help: 'Maximum plist size to fully parse (default: 50)'
+    required: false
+    set: false
+    value: null
+  - name: timezone
+    flag: --tz
+    type: str
+    help: Optional IANA timezone (e.g., 'UTC', 'America/Los_Angeles')
+    required: false
+    set: false
+    value: null

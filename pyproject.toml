@@ -1,0 +1,139 @@
+[project]
+name = "mars"
+version = "1.0.0"
+description = "macOS Artifact Recovery Suite (MARS) is a forensic scanner and recovery toolkit for macOS images. It discovers logs, databases, and caches, salvages carved SQLite data, and correlates recovered records with exemplar artifacts."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "bbpb>=1.4.2",
+    "ccl-segb @ git+https://github.com/cclgroupltd/ccl-segb.git",
+    "dfir-unfurl>=20250810",
+    "plotly>=6.3.1",
+    "pyyaml>=6.0",
+    "ruamel.yaml>=0.18.0",
+    "rich>=13.0.0",
+    "typing-extensions>=4.15.0",
+    "simplejson>=3.20.2",
+    "dfvfs>=20251019",
+    "lz4>=4.4.5",
+    "pandas>=2.3.3",
+    "prompt-toolkit>=3.0.0",
+]
+
+[project.scripts]
+mars = "mars.cli.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mars"]
+
+# Include resources directory in the wheel (binaries, libs, images, docs)
+[tool.hatch.build.targets.wheel.force-include]
+"src/resources" = "resources"
+
+[project.optional-dependencies]
+plotly = [
+    
+    "kaleido>=1.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "markdown>=3.5",
+    "pylint>=4.0.3",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.14.2",
+    "vulture>=2.14",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+
+[tool.ruff]
+line-length = 120
+[tool.ruff.lint]
+select = [
+  "E",        
+  "F",        
+  "W",        
+  "I",        
+  "UP",       
+  "C4",       
+  "FA",       
+  "ISC",      
+  "ICN"
+]
+
+extend-select = [
+    "F",        
+    "W",        
+    "E",        
+    "I",        
+    "UP",       
+    "C4",       
+    "FA",       
+    "ISC",      
+    "ICN",      
+    "RET",      
+    "SIM",     
+    "TID",      
+    "TC",      
+    "PTH",      
+    "TD",      
+  "NPY"      
+]
+
+ignore = [
+    "B011",
+    "E501",
+    "TD003",
+    "RET504",
+]
+
+[tool.basedpyright]
+include = ["src/mars"]
+# Excluding pandas false errors
+exclude = [
+    "**/__pycache__",
+    "src/mars/report_modules/wifi_report_generator/wifi_report.py", 
+]
+
+# "off" | "basic" | "standard" | "strict"
+typeCheckingMode = "basic"  
+
+reportGeneralTypeIssues = "error"
+reportOptionalMemberAccess = "error"
+reportOptionalSubscript = "error"
+reportOptionalCall = "error"
+
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
+reportUnusedVariable = false
+
+reportUnusedImport = "warning"
+reportUnusedFunction = "none"
+reportPrivateUsage = "none"
+
+
+
+

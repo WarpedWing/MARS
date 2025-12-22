@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400..600&display=swap"
+      rel="stylesheet" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MARS Help Guide</title>
+    <link href="default.css" rel="stylesheet" type="text/css" />
+  </head>
+  <body data-theme="dark">
+    <div class="layout">
+      <nav>
+        <div class="logo">
+          <img src="../images/WarpedWingLabsLogo_Horizontal_W500.png" alt="WarpedWing Labs" />
+        </div>
+        <h3>Getting Started</h3>
+        <ul>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#getting-started">Quick Start</a></li>
+        </ul>
+        <h3>Workflows</h3>
+        <ul>
+          <li><a href="#projects">Project Management</a></li>
+          <li><a href="#exemplar-scan">Exemplar Scan</a></li>
+          <li><a href="#candidates-scan">Candidates Scan</a></li>
+          <li><a href="#free-match">Free Match Mode</a></li>
+        </ul>
+        <h3>Reports & Analysis</h3>
+        <ul>
+          <li><a href="#reports">Reports & Visualization</a></li>
+          <li><a href="#report_modules">Report Modules</a></li>
+        </ul>
+        <h3>Export & Import</h3>
+        <ul>
+          <li><a href="#export">Export Data</a></li>
+          <li><a href="#exemplar_packages">Exemplar Packages</a></li>
+        </ul>
+        <h3>Configuration</h3>
+        <ul>
+          <li><a href="#settings">Settings</a></li>
+          <li><a href="#arc-manager">Artifact Catalog</a></li>
+          <li><a href="#utilities">Utilities</a></li>
+        </ul>
+        <h3>Reference</h3>
+        <ul>
+          <li><a href="#additional_docs">Additional Docs</a></li>
+          <li><a href="#terminology">Terminology</a></li>
+        </ul>
+      </nav>
+
+      <main>
+        <header>
+          <h1>MARS Help Guide</h1>
+          <p class="subtitle">macOS Artifact Recovery Suite</p>
+        </header>
+
+        <!-- OVERVIEW -->
+        <section id="overview">
+          <p>
+            <strong>MARS</strong> is a data extraction and recovery toolkit for macOS that salvages
+            and recovers SQLite, plist, log, and cache data from a set of raw, carved files and
+            matches them with artifacts of forensic interest from a reference system.
+          </p>
+          <p>
+            In some cases,
+            <strong
+              >MARS can recover thousands more database rows and hundreds of extra days of
+              data</strong
+            >
+            beyond what exists in the original reference files alone.
+          </p>
+          <div class="tip">
+            <div class="tip-title">Core MARS Definitions</div>
+            <dl>
+              <p>
+                <dt><strong>Exemplar</strong></dt>
+                <dd>
+                  The set of baseline target artifacts (databases, logs, etc.) from a reference
+                  system that forms the "ground truth" for recovery.
+                </dd>
+              </p>
+              <p>
+                <dt><strong>Candidate</strong></dt>
+                <dd>
+                  An unclassified files MARS will recover then attempt to match to exemplar
+                  artifacts.
+                </dd>
+              </p>
+              <p>
+                <dt><strong>Rubric</strong></dt>
+                <dd>A JSON file that contains per-column matching guide for a given database.</dd>
+              </p>
+            </dl>
+          </div>
+          <h2>How It Works</h2>
+          <h3>Exemplar Scan</h3>
+
+          <p>
+            MARS uses a catalog of known artifacts to collect target files from an exemplar system.
+            It can scan most disk image formats (EWF, etc.), folders, archives, and live macOS
+            systems.
+          </p>
+          <p>
+            Artifacts with associated artchives - like Powerlog's .gz backups - are automatically
+            decompressed, deduplicated, and combined.
+          </p>
+          <p>
+            Databases are then "fingerprinted" column-by-column to create rubrics for matching
+            candidates against.
+          </p>
+          <h3>Candidates Scan</h3>
+          <p>
+            The four-stage recovery and vetting process ensures that
+            <strong>all candidate data that <i>can be</i> recovered <i>is</i> recovered</strong>.
+          </p>
+
+          <p>
+            MARS assesses and classifies the recovered data - including from within corrupt SQLite
+            databases - then matches it against exemplar rubrics.
+          </p>
+          <p>
+            Truly unrepairable databases are byte-carved with protobuf extraction and timestamp
+            detection for manual analysis.
+          </p>
+          <h3>Reports</h3>
+          <p>
+            Both Exemplar and Candidate reports provide quick links to artifact folders and module
+            reports, such as WiFi history and Biome parsing. Data Comparison Reports show exactly
+            how much data you've gained beyond baseline, measured in rows and days, and include a
+            comprehensive zoomable timeline.
+          </p>
+          <h3>Export Options</h3>
+          <p>
+            Export original Exemplar files, matched Candidates, or Both. The full-path option
+            recreates the original file and folder structure, making the data easily parsable by
+            external tools such as
+            <a href="https://github.com/ydkhatri/mac_apt" target="_blank">mac_apt</a>,
+            <a href="https://github.com/mac4n6/APOLLO" target="_blank">APOLLO</a>,
+            <a href="https://github.com/log2timeline/plaso" target="_blank">plaso</a>, and others.
+          </p>
+          <p>
+            The combined export deduplicates and merges data while maintaining its integrity.
+            Discrete user and profile account data is never mixed. An optional database source
+            column marks each row's origin - so you can always trace the information back to its
+            source.
+          </p>
+          <h3>Free Scan</h3>
+          <p>
+            If you just want to salvage corrupt SQLite databases, MARS can do that, too. Run the
+            recovery pipeline on any set of files to automatically recover as much data as possible.
+            Try it on the
+            <a
+              href="https://digitalcorpora.s3.amazonaws.com/s3_browser.html#corpora/sql/"
+              target="_blank"
+              >SQLite Forensic Corpus</a
+            >
+            to see how it works.
+          </p>
+
+          <h4>Additional Features</h4>
+          <ul>
+            <li>
+              Mount EWF images directly in macOS via
+              <a href="https://www.fuse-t.org/" target="_blank">FUSE-T</a>
+            </li>
+            <li>
+              Automatic pseudo-logarchive creation, ready for
+              <a href="https://github.com/mandiant/macos-UnifiedLogs" target="_blank"
+                >Unified Logs</a
+              >
+              parsing
+            </li>
+            <li>
+              <a href="https://plotly.com/" target="_blank">Plotly</a> data visualization for SQLite
+            </li>
+            <li>Add and edit targets using the Artifact Recovery Catalog (ARC) Manager</li>
+            <li>
+              Export and import anonymized exemplar catalog packages to share with other MARS users
+            </li>
+          </ul>
+
+          <h3>v1.0 Report Modules</h3>
+          <ul>
+            <li>WiFi activity and location mapping</li>
+            <li>
+              <a href="https://github.com/cclgroupltd/ccl-segb" target="_blank">Biome</a> parsing
+            </li>
+            <li>
+              Firefox <a href="https://github.com/lz4/lz4" target="_blank">JSONLZ4</a> parsing
+            </li>
+            <li>Firefox cache parsing (extract images, HTML, etc.)</li>
+          </ul>
+
+          <div class="tip">
+            <div class="tip-title">Tip</div>
+            <p>Enter <span class="keyboard">h</span> in the MARS menu to open this help file.</p>
+          </div>
+        </section>
+
+        <!-- GETTING STARTED -->
+        <section id="getting-started">
+          <h2>Quick Start</h2>
+          <p>The typical MARS workflow follows these steps:</p>
+
+          <div class="workflow">
+            <div class="workflow-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Create a Project</h4>
+                <p>Set up a new case with project name, examiner info, and case number.</p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Run Exemplar Scan</h4>
+                <p>
+                  Scan a reference macOS system to extract target artifacts, create matching
+                  rubrics, and run exemplar report modules.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Run Candidates Scan</h4>
+                <p>
+                  Process carved/recovered files, classify them against your exemplar schemas, and
+                  run candidate report modules.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Generate Reports and Review Data</h4>
+                <p>
+                  Investigate recovered data and create exemplar vs recovered comparison reports.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">5</div>
+              <div class="step-content">
+                <h4>Export Data</h4>
+                <p>Package results for external forensic tools.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PROJECT MANAGEMENT -->
+        <section id="projects">
+          <h2>Project Management</h2>
+          <p>
+            MARS organizes all analysis within projects. Each project contains exemplar scans,
+            candidate scans, reports, and exported data.
+          </p>
+
+          <h3>Creating a New Project</h3>
+          <ol>
+            <li>Select <strong>New Project</strong> from the main menu</li>
+            <li>Choose a directory for the project folder</li>
+            <li>
+              Enter project details:
+              <ul>
+                <li><strong>Project Name</strong> – Descriptive name for the case</li>
+                <li><strong>Examiner Name</strong> – Your name (optional)</li>
+                <li><strong>Case Number</strong> – Evidence or case identifier (optional)</li>
+                <li><strong>Description</strong> – Additional notes (optional)</li>
+              </ul>
+            </li>
+          </ol>
+
+          <h3>Opening an Existing Project</h3>
+          <p>
+            Select <strong>Open Project</strong> and browse to a <code>.marsproj</code> file, or use
+            <strong>Last Project</strong> to quickly reopen your most recent project.
+          </p>
+
+          <h3>Project Structure</h3>
+          <p>Each project creates the following structure:</p>
+          <div class="flow-diagram">
+            # MARS PROJECT FOLDER<br /><br />
+            ProjectName/<br />
+            │<br />
+            ├── ProjectName.marsproj &nbsp;&nbsp;&nbsp;&nbsp;# Project metadata<br />
+            ├── project.db
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#
+            Scan tracking database<br />
+            ├── .marsproj
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#
+            Project configuration file<br />
+            │<br />
+            ├── output/<br />
+            │&nbsp;&nbsp;&nbsp;├── index.html
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Index of all scans<br />
+            │&nbsp;&nbsp;&nbsp;│<br />
+            │&nbsp;&nbsp;&nbsp;└── MARS_ProjectName_YYYYMMDD_HHMMSS/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Exemplar folder<br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── exemplar/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Exemplar scan results<br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── candidates/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Candidates scan folders<br />
+            │<br />
+            ├── exports/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#
+            Exported project data<br />
+            └── reports/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#
+            Generated HTML reports
+          </div>
+          <p>
+            A project may contain multiple exemplar scans, and each one has its own folder within
+            the <code>output</code> folder.
+          </p>
+          <p>
+            Likewise, each exemplar scan may contain multiple candidates scans. Each one has its own
+            timestamped folder within the exemplar's <code>candidates</code> folder.
+          </p>
+          <p>
+            The <code>exports</code> folder contains all exported data, including original exemplar
+            files, recovered candidate files, and combined datasets.
+          </p>
+        </section>
+
+        <!-- EXEMPLAR SCAN -->
+        <section id="exemplar-scan">
+          <h2>Exemplar Scan</h2>
+          <p>
+            After creating a project, you'll typically start by running an exemplar scan, the first
+            option on the main menu. Start by selecting the reference system source. Then, unless
+            you're scanning a live system, use the file explorer to select your image, archive, or
+            folder.
+          </p>
+
+          <h3>Source Types</h3>
+          <table>
+            <tr>
+              <th>Source</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><strong>Disk Image</strong></td>
+              <td>E01, Ex01, DD, DMG, or other forensic image formats</td>
+            </tr>
+            <tr>
+              <td><strong>Directory</strong></td>
+              <td>Mounted macOS volume or exported file system folder</td>
+            </tr>
+            <tr>
+              <td><strong>Live System</strong></td>
+              <td>Scan the running macOS machine (requires Full Disk Access)</td>
+            </tr>
+            <tr>
+              <td><strong>Archive</strong></td>
+              <td>TAR, ZIP, GZIP containing macOS file structure</td>
+            </tr>
+          </table>
+
+          <h4>Image Scan</h4>
+          <p>
+            MARS can scan forensic disk images directly using
+            <a href="https://github.com/log2timeline/dfvfs" target="_blank">dfVFS</a>. After
+            choosing the image, MARS will prompt you to select the target partition. For APFS
+            drives, MARS will highlight the suggested Data partition with a green star (<span
+              style="color: green"
+              >★</span
+            >) symbol.
+          </p>
+          <h4>Live System - Full Disk Access (FDA)</h4>
+          <p>
+            When scanning a live system, MARS requires
+            <strong>Full Disk Access</strong> permission to read protected files.
+          </p>
+          <p>
+            Additionally, we recommend you run a live system scan with elevated privileges (sudo) to
+            ensure access to all protected files. MARS will prompt you to enter your password before
+            scanning.
+          </p>
+          <div class="tip">
+            <div class="tip-title">Enabling Full Disk Access</div>
+            Go to
+            <strong>System Preferences → Privacy & Security → Full Disk Access</strong>
+            and add your terminal application (Terminal.app, iTerm, Ghostty, etc.).
+          </div>
+
+          <h4>Directory/Archive</h4>
+          <p>
+            MARS can scan regular directories and archives (TAR, ZIP, GZIP) containing macOS file
+            structures. Be aware that large archives may take a while to process. If possible,
+            consider extracting the archive to a directory first.
+          </p>
+
+          <h3>Post-Exemplar Scan</h3>
+          <p>
+            Once the scan finishes, MARS will prompt you to open the scan report document, which
+            provides quick access to key folders and reports.
+          </p>
+          <p>
+            If you decline, you can still access the scan results later by navigating to the
+            exemplar scan's <code>reports</code> folder. Co-located is the
+            <code>exemplar_scan_summary.txt</code> file, which contains detailed information about
+            the scan results on a per-file basis.
+          </p>
+
+          <h3>Exemplar Structure</h3>
+          <p>Each exemplar scan creates the following folder structure:</p>
+          <div class="flow-diagram">
+            # MARS EXEMPLAR FOLDER<br /><br />
+            MARS_ProjectName_YYYYMMDD_HHMMSS/<br />
+            │<br />
+            ├── case_metadata.json &nbsp;&nbsp;&nbsp;&nbsp;# Scan metadata<br />
+            ├── candidates/<br />
+            │<br />
+            ├── exemplar/<br />
+            │&nbsp;&nbsp;&nbsp;├── caches/<br />
+            │&nbsp;&nbsp;&nbsp;├── keychains/<br />
+            │&nbsp;&nbsp;&nbsp;├── logs/<br />
+            │&nbsp;&nbsp;&nbsp;│<br />
+            │&nbsp;&nbsp;&nbsp;└── databases/<br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── catalog/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Combined/deduped databases for matching<br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── encrypted/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Encrypted databases<br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── originals/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Individual components of combined databases<br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── schemas/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Catalog rubrics/schemas and hash map<br />
+            │<br />
+            └── reports/<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;├── exemplar_scan.html<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;├── exemplar_scan_summary.txt<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;└── [individual module reports folders]
+          </div>
+          <p>
+            Each subfolder within the <code>exemplar</code> folder contains the output of a specific
+            file type.
+          </p>
+
+          <ul>
+            <li>
+              <code>caches</code> – Cache files, e.g., Biome streams, Spotlight indexes, and browser
+              data
+            </li>
+            <li><code>keychains</code> – Encrypted keychains, both system and user</li>
+            <li>
+              <code>logs</code> – Log files, e.g., Apple System Logs, Bluetooth devices, and WiFi
+              analytics
+            </li>
+            <li><code>databases</code> – SQLite databases only</li>
+          </ul>
+
+          <h3>Exemplar Database Folders</h3>
+          <p>The <code>databases</code> folder is different. It contains several subfolders.</p>
+          <table>
+            <tr>
+              <th>Directory</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><code>catalog/</code></td>
+              <td>
+                Target SQLite files from the artifact catalog. Each subfolder contains the named
+                database and a <code>{filename}_provenance.json</code> file, which tracks file data
+                and origin information. (<i>See below for details.</i>)
+              </td>
+            </tr>
+            <tr>
+              <td><code>encrypted/</code></td>
+              <td>
+                Databases that appear to be encrypted are routed here. Since no rubric can be
+                created, these databases are not used for matching.
+              </td>
+            </tr>
+            <tr>
+              <td><code>originals/</code></td>
+              <td>
+                Contains the original, uncombined SQLite databases from the artifact catalog,
+                including archives. You might also find "dummy" databases here that macOS creates,
+                which have no usuable schema (only a single 'integrityCheck' table).
+              </td>
+            </tr>
+            <tr>
+              <td><code>schemas/</code></td>
+              <td>
+                Contains schemas and rubrics for each catalog database as well as a
+                <code>exemplar_hash_lookup.json</code> file, which contains the hash lookup table
+                for O(1) schema matching.
+              </td>
+            </tr>
+          </table>
+
+          <h3>Exemplar Catalog Folder</h3>
+          <p>Each database folder and filename tells a story.</p>
+          <p>
+            If a database type has multiple files with the same schema, they are combined into a
+            single file. Likewise, if the database has archived copies, they're decompressed,
+            combined, and deduplicated. Combined files are indicated with a
+            <code>.combined</code> filename extension, and each source database is listed in the
+            <code>provenance.json</code> file.
+          </p>
+          <p>
+            If a database type contains multiple files with different schemas, they are marked with
+            version numbers: <code>_v1</code>, <code>_v2</code>, etc.
+          </p>
+          <p>
+            Some databases are marked with an <code>_empty</code> suffix. This indicates that the
+            file contains no useful data, but since the schema is intact, it's still possible for
+            candidates data to be matched to it. For that reason, these database "shells" are kept
+            in <code>catalog/</code>.
+          </p>
+          <p>Databases associated with a macOS user account are named with the user's UID.</p>
+          <p>
+            So, <code>Biome Databases 1_jdoe_v2_empty</code> contains the second schema version of
+            user jdoe's <code>Biome 1</code> database, which is also empty.
+          </p>
+          <p>
+            Database folders from applications that use profiles (e.g., web browsers) include
+            subfolders for each profile. So, <code>Chrome Cookies_jdoe</code> might contain several
+            subfolders, like <code>Default</code>, <code>Profile 1</code>, etc., each with its own
+            database.
+          </p>
+
+          <h3>Next Steps</h3>
+          <p>
+            If you're using MARS only to gather files and use the reports, you can skip ahead to
+            <a href="#reports">Reports</a>.
+          </p>
+          <p>If you're looking to salvage and match carved files, continue to the next section.</p>
+        </section>
+
+        <!-- CANDIDATES SCAN -->
+        <section id="candidates-scan">
+          <h2>Candidates Scan</h2>
+          <p>
+            The candidates scan processes carved or recovered files (typically from tools like
+            PhotoRec, Scalpel, X-Ways, Encase) and classifies them against your exemplar schemas.
+          </p>
+
+          <h3>Selecting an Exemplar</h3>
+          <p>Before running a candidates scan, you must have an exemplar available:</p>
+          <ul>
+            <li><strong>Project Exemplar</strong> – Use a scan from the current project</li>
+            <li>
+              <strong>Imported Package</strong> – Use an exemplar package
+              <a href="#export">exported</a> from another project
+            </li>
+          </ul>
+          <h3>Selecting a Candidates Folder</h3>
+          <p>
+            Depending on your goals, you can select the entire carved files output folder, or a
+            subset. Whichever folder you choose, MARS will scan it recursively. Files that have a
+            very low chance of miscategorization as a target system file (image files, etc.) will be
+            skipped.
+          </p>
+          <p>
+            The remainder will be introspected scanned for magic bytes and other key signatures,
+            then classified. Archives will be automatically decompressed and processed, including
+            <code><a href="https://github.com/arenn/gzrt" target="_blank">gzrecover</a></code> to
+            crack corrupt .gz files.
+          </p>
+
+          <div class="tip" id="lost_and_found">
+            <div class="tip-title">Lost and Found (L&F) Data</div>
+            <p>
+              One of the most important aspects of SQLite data recovery is the
+              <code>lost_and_found</code> table that the <code>sqlite3 .recover</code> function
+              creates.
+            </p>
+            <p>
+              When a database becomes corrupt, the <code> sqlite3 .recover</code> command can be
+              used to attempt recovery. However, even if the general schema can be made whole again,
+              data is often "lost" with the pages of the database. In an attempt to preserve all
+              data, <code>sqlite3</code> creates a <code>lost_and_found</code> table, a sort of
+              "catch-all" of leftover "lost" rows.
+            </p>
+            <p>
+              A database's L&F table could contain data from any or all of its tables, and some of
+              it may be corrupt or incomplete. In our test cases, some L&F tables were hundreds of
+              thousands of rows long and hundreds of columns wide. After all, the table must contain
+              as many columns as the longest row of lost data.
+            </p>
+            <div class="tip-title">Semantic Roles and "Fingerprints"</div>
+            <p>
+              One of the challenges of MARS was to parse these <code>lost_and_found</code> tables
+              and match the data to exemplar schemas. MARS does this through the use of rubrics. For
+              example, each column of each table is analyzed for semantic roles, like
+              <code>timestamp</code>, <code>uuid</code>, or <code>email</code>. Along with other
+              datapoints, these create a "fingerprint" for the table.
+            </p>
+            <p>
+              Likewise, contiguous blocks of L&F data are "fingerprinted", and where the rubric and
+              L&F "fingerprints" coincide, we have a probable data match.
+            </p>
+          </div>
+
+          <h3>Post-Candidates Scan</h3>
+          <p>
+            Once the scan finishes, MARS will prompt you to open the scan report document, which
+            provides quick access to key folders and reports. If you decline, you can still access
+            the scan results later by navigating to the candidates scan's
+            <code>reports</code> folder.
+          </p>
+
+          <h3>Candidates Structure</h3>
+          <p>
+            Each candidates scan creates the following structure within an exemplar's
+            <code>candidates</code> folder:
+          </p>
+          <div class="flow-diagram">
+            # MARS CANDIDATES FOLDER<br /><br />
+            YYYYMMDD_HHMMSS/<br />
+            │<br />
+            ├── metadata.json &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Scan
+            metadata<br />
+            ├── caches/<br />
+            ├── logs/<br />
+            ├── databases/<br />
+            │&nbsp;&nbsp;&nbsp;├── carved/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Byte-carved
+            corrupt databases<br />
+            │&nbsp;&nbsp;&nbsp;├── catalog/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Exact schema matches
+            to exemplar catalog<br />
+            │&nbsp;&nbsp;&nbsp;└── empty/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Catalog
+            matches without usable data<br />
+            │&nbsp;&nbsp;&nbsp;└── found_data/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#
+            Unmatched or near-matched salvaged data<br />
+            │&nbsp;&nbsp;&nbsp;└── metamatches/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Intact
+            non-catalog databases<br />
+            │&nbsp;&nbsp;&nbsp;└── schemas/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Metamatch schemas<br />
+            │&nbsp;&nbsp;&nbsp;└── selected_variants/ &nbsp;# Individual recovered carved
+            databases<br />
+            └── reports/
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#
+            Candidates HTML reports
+          </div>
+
+          <h3>Candidates Database Folders</h3>
+          <table>
+            <tr>
+              <th>Directory</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><code>catalog/</code></td>
+              <td>
+                Exact schema matches to known exemplar databases. These can consist of carved
+                (intact or mostly intact) data, <a href="#lost_and_found">L&F data</a>, or a mix of
+                both.
+                <br />
+                <br />
+                Some databases have a <code>rejected</code> subfolder, which contains an SQLite
+                database of data that didn't meet rubric or datatype standards during the matching
+                process. These files may still contain useful data, so make sure to review them.
+              </td>
+            </tr>
+            <tr>
+              <td><code>empty/</code></td>
+              <td>
+                Databases may be exact catalog matches, but contain no usable data. They are moved
+                into the empty folder for reference. Don't ignore this folder, though, as
+                <code>empty</code> databases may also contain <code>rejected</code> data.
+              </td>
+            </tr>
+            <tr>
+              <td><code>found_data/</code></td>
+              <td>
+                Orphaned data from L&F tables that couldn't be matched. If the data was determined
+                to be a near match to an exemplar, the name will contain a match hint.
+              </td>
+            </tr>
+            <tr>
+              <td><code>metamatches/</code></td>
+              <td>
+                Not all carved databases will be matched to exemplars, but they still may contain
+                important information. So, MARS matches them among themselves, or
+                <strong>metamataches</strong>, to create a strong rubric for matching L&F data.
+                <br />
+                <br />
+                Databases with identical schemas are combined and deduplicated for ease of browsing.
+                The file/folder name is based off the first table name.
+              </td>
+            </tr>
+            <tr>
+              <td><code>schemas/</code></td>
+              <td>
+                Similar to the schemas directory in the exemplar scan, this contains schema and
+                rubric for metamatches.
+              </td>
+            </tr>
+            <tr>
+              <td><code>selected_variants/</code></td>
+              <td>
+                Contains the "best" variant of each carved database. (<i>See below for details.</i>)
+              </td>
+            </tr>
+          </table>
+
+          <h3>Candidates Catalog Folder</h3>
+          <p>
+            The Candidates catalog folder is similar to the exemplar catalog folder, but there are
+            some key differences.
+          </p>
+          <p>
+            With exemplar data, there's no doubt as to which user or profile the database belongs
+            to. But with L&F data, it's not always so clear-cut.
+          </p>
+          <p>For example, imagine the following exemplar system:</p>
+
+          <ul>
+            <li>Two discrete users</li>
+            <li>
+              Each user has three Chrome profiles, each with its own separate set of Chrome
+              databases
+            </li>
+            <li>The schemas are identical between users/profiles for a given Chrome database</li>
+          </ul>
+
+          <p>
+            MARS will attempt to match L&F data to the exemplar schemas, but since the schemas are
+            identical, it can't confidently distinguish between the different user profiles. To
+            avoid attributing data to the wrong user or profile, MARS creates a
+            <code>_multi</code> database to indicate that the data therein could be from any of the
+            Chrome profiles.
+          </p>
+          <p>
+            In cases where <i>some</i> but not <i>all</i> tables match between database types, only
+            those tables they have in common will be added to the <code>_multi</code> database.
+          </p>
+
+          <div class="tip">
+            <div class="tip-title">Selecting the "Best" Database Variant</div>
+            <p>
+              The first step in the recovery process is to select the "best" variant of each
+              database. What makes a variant "best"? MARS uses an internal scoring system to
+              determine it.
+            </p>
+            <p>
+              First, it has to open. If a database opens, is valid, and has data, MARS select this
+              original variant and moves on to the next database. If it doesn't open, MARS will try
+              to <code>clone</code> the database, which can sometimes fix schema issues, then
+              attempt to recover it using the <code>.recover</code> command. If a
+              <code>lost_and_found</code> database is created, it stores that data for matching.
+            </p>
+            <p>
+              If the database is determined to be an exemplar catalog match, MARS will go a step
+              further and use DoD Cyber Crime Center's
+              <code
+                ><a href="https://github.com/dod-cyber-crime-center/sqlite-dissect" target="_blank"
+                  >sqlite_dissect</a
+                ></code
+              >
+              tool. It can potentially extract even more data from severely corrupted databases than
+              <code>.recover</code>.
+            </p>
+            <div class="tip-title">Scoring</div>
+            <p>
+              Each variant is scored based on the number of rows and tables recovered, a Jaccardian
+              comparison with an excerpt of exemplar data, and the overall integrity of the
+              database. In a tie, the variant closest to the original file (in terms of processing
+              steps) is selected.
+            </p>
+            <div class="tip-title">If All Else Fails: Byte-Carve</div>
+            <p>
+              If the file fails all attempts at recovery, the original database is marked for
+              <a href="pages/carver.html">byte-carving</a>. The internal binary data is extracted
+              and parsed with the help of
+              <a href="https://github.com/obsidianforensics/unfurl" target="_blank">Unfurl</a> and
+              <a href="https://github.com/nccgroup/blackboxprotobuf" target="_blank"
+                >blackboxprotobuf</a
+              >. The resulting SQLite database contains converted plain text data, decoded
+              protobufs, and possible timestamp flags to help with manual parsing.
+            </p>
+          </div>
+
+          <h3>Next Steps</h3>
+          <p>
+            Once the candidates scan is complete, we suggest you run the
+            <strong>Data Recovery Comparison</strong>
+            report. You can find it under <a href="#reports">Reports & Visualization</a> from the
+            main menu.
+          </p>
+        </section>
+
+        <!-- FREE MATCH MODE -->
+        <section id="free-match">
+          <h2>Free Match Mode</h2>
+          <p>
+            Free Match Mode allows you to process SQLite databases without needing a full exemplar
+            scan. This is useful when:
+          </p>
+          <ul>
+            <li>You don't have access to a reference system</li>
+            <li>You're working with custom or unknown database types</li>
+            <li>You need to quickly salvage random corrupt SQLite databases</li>
+          </ul>
+
+          <h3>Free Match Options</h3>
+          <table>
+            <tr>
+              <th>Option</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><strong>Free Exemplar Scan</strong></td>
+              <td>Generate schemas/rubrics from user-provided SQLite files. No catalog used.</td>
+            </tr>
+            <tr>
+              <td><strong>Free Candidate Scan</strong></td>
+              <td>Process corrupt SQLites against free exemplars</td>
+            </tr>
+            <tr>
+              <td><strong>Free Salvage</strong></td>
+              <td>
+                Quick SQLite recovery without any exemplar. Databases with identical schemas are
+                combined. Corrupt databases are byte-carved. Will also pick up text, plist, or cache
+                files that MARS current scans for.
+              </td>
+            </tr>
+          </table>
+        </section>
+
+        <!-- REPORTS -->
+        <section id="reports">
+          <h2>Reports & Visualization</h2>
+          <p>
+            MARS generates interactive HTML reports for analyzing recovered data and comparing it
+            against exemplar baselines.
+          </p>
+
+          <h3>Data Recovery Comparison</h3>
+          <p>The comparison report shows side-by-side analysis of exemplar vs candidate data:</p>
+          <ul>
+            <li><strong>Database Statistics</strong> – Row counts, recovery rates per database</li>
+            <li><strong>Recovery Metrics</strong> – Overall success rates and coverage</li>
+            <li>
+              <strong>Timeline Coverage</strong> – Date ranges present in exemplar vs recovered
+            </li>
+            <li>
+              <strong>Activity Heatmaps</strong> – Visual representation of data density over time
+            </li>
+          </ul>
+
+          <h3>Chart Plotter</h3>
+          <p>
+            The interactive chart plotter allows you to visualize database columns over time. Unless
+            you know exactly what you want to plot, we recommend you have the database open while
+            plotting.
+          </p>
+          <div class="card cardlist">
+            <div class="card-title">Chart Plotter Steps</div>
+            <ol>
+              <li>Select Chart Plotter from the Reports & Visualization menu</li>
+              <li>Add a series, then select an eligible exemplar folder</li>
+              <li>Select a database from an exemplar or candidate (if available)</li>
+              <ul>
+                <li>Only plottable databases are shown (must have timestamp column)</li>
+                <li>The number of plottable tables and rows are shown for reference</li>
+              </ul>
+              <li>Choose a table</li>
+              <ul>
+                <li>Only tables with a timestamp column are shown</li>
+                <li>The number of rows in the selected table are shown for reference</li>
+                <li>
+                  If the table has more than one timestamp column, you can select which one to use
+                </li>
+              </ul>
+              <li>Select the first column to plot</li>
+              <li>If you're finished, hit enter. Or add an additional series (up to 5)</li>
+              <ul>
+                <li>You may go back and add a series from a completely different database</li>
+                <li>You can also compare exemplar vs candidate databases</li>
+              </ul>
+              <li>If the table has a text column, it can be added as a tooltip hover label</li>
+              <li>Select 'plot selected series', then choose a chart type.</li>
+              <ul>
+                <li>'Overlay Line' (up to 2 series)</li>
+                <li>'Stacked Line' (up to 5 series)</li>
+                <li>'Scatter' (up to 2 series)</li>
+                <li>'Bar' (single series)</li>
+              </ul>
+              <li>Choose a timezone setting</li>
+              <ul>
+                <li>Local timezone (your current timezone)</li>
+                <li>UTC (Coordinated Universal Time)</li>
+                <li>Custom offset (e.g., +05:00)</li>
+              </ul>
+              <li>Select light or dark theme</li>
+              <li>Select optional rolling mean data smoothing</li>
+              <ul>
+                <li>Rolling mean smoothing can help visualize trends in noisy data</li>
+                <li>
+                  Note that smoothed data can obfuscate forensically important details. Use with
+                  caution
+                </li>
+              </ul>
+              <li>If Kaleido is installed, select whether to export the chart as a static image</li>
+              <li>Generate Plotly chart</li>
+            </ol>
+          </div>
+          <p>
+            The exported chart (and optional PNG) can be found in the exemplar's
+            <code>reports/plots</code> folder.
+          </p>
+          <p>
+            See the
+            <a href="pages/plotter.html">Plotter documentation</a>
+            for details on supported timestamp formats, chart types, and multi-database plotting.
+          </p>
+
+          <h3>Report Index</h3>
+          <p>
+            The Report Index provides an HTML overview of all scans in your project, with links to
+            individual scan reports and output folders.
+          </p>
+        </section>
+
+        <!-- REPORT_MODULES -->
+        <section id="report_modules">
+          <h2>Report Modules</h2>
+          <p>
+            MARS includes several built-in <a href="pages/report_modules.html">report modules</a> to
+            extend data analysis. Each module generates structured output (CSV, JSON, HTML) from
+            specific artifact types.
+          </p>
+
+          <h3>Current Modules</h3>
+          <table>
+            <tr>
+              <th>Module</th>
+              <th>What It Shows</th>
+              <th>README</th>
+            </tr>
+            <tr>
+              <td><strong>WiFi Report</strong></td>
+              <td>
+                This module parses macOS Wi-Fi and network artifacts to generate an HTML report
+                summarizing network activity.
+              </td>
+              <td>
+                <a href="pages/wifi_report.html">Documentation</a>
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Biome Parser</strong></td>
+              <td>
+                This module parses macOS Biome SEGB files to extract system telemetry and
+                application metrics.
+              </td>
+              <td>
+                <a href="pages/biome_parser.html">Documentation</a>
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Firefox Cache Parser</strong></td>
+              <td>
+                This module parses Firefox's cache2 directory structure to extract HTTP artifacts
+                including URLs, response headers, and cached content.
+              </td>
+              <td>
+                <a href="pages/firefox_cache.html">Documentation</a>
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Firefox JSONLZ4 Parser</strong></td>
+              <td>
+                This module salvages Firefox JSONLZ4 (mozLz4) compressed JSON files, extracting
+                sessions, bookmarks, and telemetry data from both intact and carved/truncated files.
+              </td>
+              <td>
+                <a href="pages/firefox_jsonlz4.html">Documentation</a>
+              </td>
+            </tr>
+          </table>
+        </section>
+
+        <!-- EXPORT -->
+        <section id="export">
+          <h2>Export Data</h2>
+          <p>
+            MARS can package your analysis for use with external forensic tools or share exemplar
+            data with colleagues. Exports are saved to the <code>exports/</code> folder in your
+            project directory.
+          </p>
+
+          <h3>Export Sources</h3>
+          <table>
+            <tr>
+              <th>Export Type</th>
+              <th>Contents</th>
+            </tr>
+            <tr>
+              <td><strong>Exemplar Only</strong></td>
+              <td>Reference databases from the exemplar scan - your baseline data</td>
+            </tr>
+            <tr>
+              <td><strong>Candidate Only</strong></td>
+              <td>Recovered databases from candidate scan (catalog matches only)</td>
+            </tr>
+            <tr>
+              <td><strong>Combined</strong></td>
+              <td>
+                Merged exemplar + candidate data. Deduplicates rows across sources while preserving
+                unique recovered data. Best for comprehensive analysis.
+              </td>
+            </tr>
+          </table>
+
+          <h3>Directory Structure Options</h3>
+          <table>
+            <tr>
+              <th>Option</th>
+              <th>Result</th>
+            </tr>
+            <tr>
+              <td><strong>Flat</strong></td>
+              <td>Essentially, a simplified copy of the MARS folder structure.</td>
+            </tr>
+            <tr>
+              <td><strong>Full Path</strong></td>
+              <td>
+                Preserves original macOS directory structure (e.g.,
+                <code>Users/admin/Library/Safari/</code>). Useful when path context matters for
+                analysis.<br /><br />
+                For candidates exports, databases with L&F data that can't be confidently attributed
+                to a specific user will be placed in a <code>_multi</code> user folder.
+              </td>
+            </tr>
+          </table>
+
+          <h3>Data Source Tracking</h3>
+          <p>
+            When exporting <strong>Combined</strong> data, you can optionally add a
+            <code>data_source</code> column to each table. This column indicates where each row
+            originated:
+          </p>
+          <ul>
+            <li><code>exemplar</code> – Row came from the live macOS exemplar scan</li>
+            <li>
+              <code>carved_{filename}</code> – Row was recovered from carved candidate databases
+            </li>
+            <li>
+              <code>found_{filename}</code> – Row originated in <code>lost_and_found</code> data
+            </li>
+          </ul>
+        </section>
+
+        <!-- EXEMPLAR PACKAGES -->
+        <section id="exemplar_packages">
+          <h2>Exemplar Packages</h2>
+          <h3>Exemplar Package Export</h3>
+          <p>
+            The <strong>Export Data</strong> menu allows you to create a shareable bundle containing
+            schemas, rubrics, and database files (all data removed) that can be imported into other
+            MARS projects. This allows teams to share exemplar configurations without transferring
+            full database contents.
+          </p>
+
+          <h3>Exemplar Package Import</h3>
+          <p>
+            Use the <strong>Import Data</strong> menu to import an external exemplar package. It
+            will then be available as an exemplar choice from the
+            <strong>Candidates Scan</strong> menu.
+          </p>
+        </section>
+
+        <!-- SETTINGS -->
+        <section id="settings">
+          <h2>Settings</h2>
+          <p>
+            Project settings allow you to customize scan behavior, configure recovery options, and
+            enable/disable processing modules.
+          </p>
+
+          <h3>General Settings</h3>
+          <table>
+            <tr>
+              <th>Setting</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><strong>Debug Mode</strong></td>
+              <td>
+                Enable verbose diagnostic output. Shows detailed processing information in the
+                console. Progress bars are automatically hidden when debug mode is enabled.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Save Debug to File</strong></td>
+              <td>
+                Write debug output to <code>mars_debug.log</code> in the project folder. Requires
+                debug mode to be enabled.
+              </td>
+            </tr>
+          </table>
+
+          <h3>Exemplar Scan Settings</h3>
+          <table>
+            <tr>
+              <th>Setting</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><strong>Epoch Minimum</strong></td>
+              <td>
+                Minimum date for valid timestamps (YYYY-MM-DD). Timestamps before this date are
+                ignored during semantic role detection. Default: 2000-01-01
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Epoch Maximum</strong></td>
+              <td>
+                Maximum date for valid timestamps. Timestamps after this are ignored. Default:
+                2038-01-19
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Min Role Sample Size</strong></td>
+              <td>
+                Minimum non-null values needed before assigning a semantic role (timestamp, UUID,
+                etc.) to a column. Default: 5
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Min Timestamp Rows</strong></td>
+              <td>
+                Minimum timestamp values required to mark a column as a timestamp role. Default: 1
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Catalog Groups</strong></td>
+              <td>
+                Enable/disable specific artifact groups (chrome, quarantine, unified_logs, etc.).
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Excluded File Types</strong></td>
+              <td>Skip general file types during scanning (cache, log, keychain, database).</td>
+            </tr>
+          </table>
+
+          <h3>Candidate Scan / Carver Settings</h3>
+          <table>
+            <tr>
+              <th>Setting</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><strong>Timestamp Start/End</strong></td>
+              <td>
+                Date range for timestamp tagging during carving. Timestamps outside this range are
+                filtered. Default: 2015-01-01 to 2030-01-01
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Timestamp Filter Mode</strong></td>
+              <td>
+                <code>strict</code> (confirmed only), <code>balanced</code> (+ likely),
+                <code>permissive</code> (+ ambiguous), or <code>all</code>. Default: permissive
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Decode Protobuf</strong></td>
+              <td>Attempt to decode protobuf data in BLOB fields. Default: enabled</td>
+            </tr>
+            <tr>
+              <td><strong>Export CSV</strong></td>
+              <td>Generate CSV output alongside JSONL for carved data. Default: disabled</td>
+            </tr>
+            <tr>
+              <td><strong>Pretty JSON</strong></td>
+              <td>Format protobuf JSON output for readability. Default: enabled</td>
+            </tr>
+            <tr>
+              <td><strong>Dissect All Variants</strong></td>
+              <td>
+                Run sqlite_dissect on all variants even without exemplar match. Advanced option.
+                Default: disabled
+              </td>
+            </tr>
+          </table>
+
+          <h3>Module Management</h3>
+          <p>
+            Enable or disable individual report modules to customize what gets processed during
+            scans.
+          </p>
+
+          <div class="tip">
+            <div class="tip-title">Saving Settings</div>
+            <strong>Save Settings to Project</strong> stores your settings in the
+            <code>.marsproj</code> file and restored when you reopen the project.
+          </div>
+        </section>
+
+        <!-- ARC MANAGER -->
+        <section id="arc-manager">
+          <h2>Artifact Recovery Catalog Manager</h2>
+          <p>
+            The <strong>Artifact Recovery Catalog (ARC)</strong> defines which files and databases
+            MARS searches for during scans. The ARC Manager allows you to view, edit, and extend the
+            catalog with custom entries.
+          </p>
+
+          <h3>Catalog Structure</h3>
+          <p>The catalog is organized hierarchically:</p>
+          <ul>
+            <li><strong>Groups</strong> – Top-level categories (Browsers, Mail, System, etc.)</li>
+            <li>
+              <strong>Targets</strong> – Individual artifacts within each group (Safari History,
+              Chrome Cookies, etc.)
+            </li>
+            <li>
+              <strong>Fields</strong> – Properties of each target (glob pattern, scope, file type,
+              etc.)
+            </li>
+          </ul>
+
+          <h3>Required Target Fields</h3>
+          <table>
+            <tr>
+              <th>Field</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td><strong>Name</strong></td>
+              <td>Display name for the artifact (e.g., <code>Safari History</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>Glob Pattern</strong></td>
+              <td>
+                File path pattern using wildcards. Supports <code>*</code> (single level) and
+                <code>**</code> (recursive). Example:
+                <code>Users/*/Library/Safari/History.db</code>
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Scope</strong></td>
+              <td>
+                <code>user</code> (handles <code>User/*/...</code>) or
+                <code>system</code> (system-wide in /Library or /private/var)
+              </td>
+            </tr>
+            <tr>
+              <td><strong>File Type</strong></td>
+              <td><code>database</code>, <code>log</code>, or <code>cache</code></td>
+            </tr>
+            <tr>
+              <td><strong>Exemplar Pattern</strong></td>
+              <td>
+                Output path pattern for exemplar files (e.g.,
+                <code>databases/catalog/Safari History*</code>)
+              </td>
+            </tr>
+          </table>
+
+          <p>
+            For the complete field list, see the
+            <a href="pages/catalog.html">ARC Manager documentation</a>.
+          </p>
+
+          <h3>Using the ARC Manager</h3>
+          <p>Access via <strong>Settings → Artifact Recovery Catalog (ARC) Manager</strong>:</p>
+          <ol>
+            <li><strong>Browse</strong> – Navigate groups and view existing targets</li>
+            <li><strong>Edit</strong> – Modify fields of existing entries</li>
+            <li><strong>Add New</strong> – Create new entries using the guided wizard</li>
+            <li><strong>Delete</strong> – Remove entries</li>
+          </ol>
+
+          <h3>Creating Custom Entries</h3>
+          <p>The <strong>New Entry Wizard</strong> guides you through creating a catalog entry:</p>
+          <ol>
+            <li>Select group (or create new group)</li>
+            <li>Enter artifact name</li>
+            <li>Specify glob pattern (validated for correctness)</li>
+            <li>Set scope (user/system) and file type</li>
+            <li>Add optional description and notes</li>
+          </ol>
+
+          <div class="tip">
+            <div class="tip-title">Pattern Examples</div>
+            <ul>
+              <li>
+                <code>Users/*/Library/Application Support/App/data.db</code> – User-scoped database
+              </li>
+              <li><code>private/var/db/diagnostics/**/*</code> – Recursive with structure</li>
+              <li><code>Library/Preferences/*.plist</code> – System preferences</li>
+            </ul>
+            <p>
+              For more information, see the
+              <a href="pages/catalog.html">ARC Manager documentation</a>.
+            </p>
+          </div>
+
+          <h3>Catalog File Location</h3>
+          <p>The catalog is stored at:</p>
+          <pre><code>src/resources/macos/artifact_recovery_catalog.yaml</code></pre>
+          <p>Custom entries can be added directly to this file or through the ARC Manager UI.</p>
+        </section>
+
+        <!-- UTILITIES -->
+        <section id="utilities">
+          <h2>Utilities</h2>
+
+          <h3>Mount EWF/E01 Image</h3>
+          <p>Mount forensic disk images (EWF format) for exploration or scanning.</p>
+          <p>
+            This feature is currently only available on macOS, and requires
+            <a href="https://www.fuse-t.org/" target="_blank">Fuse-T</a> installed.
+          </p>
+          <div class="card">
+            <div class="card-title">Installing FUSE-T</div>
+            <code>
+              brew tap macos-fuse-t/homebrew-cask<br />brew install fuse-t<br />brew install
+              fuse-t-sshfs
+            </code>
+          </div>
+        </section>
+
+        <!-- ADDITIONAL_DOCS -->
+        <section id="additional_docs">
+          <h2>Additional Documents</h2>
+          <p>Links to in-depth information on specific MARS components:</p>
+
+          <table class="doctable">
+            <tr>
+              <th>Topic</th>
+              <th>Notes</th>
+            </tr>
+            <tr>
+              <td><a href="mars_architecture.html">MARS Technical Architecture</a></td>
+              <td>Extended MARS Technical Architecture</td>
+            </tr>
+            <tr>
+              <td><a href="pages/pipeline.html">MARS Pipeline</a></td>
+              <td>File Structure of the MARS scanner pipeline</td>
+            </tr>
+            <tr>
+              <td>
+                <a href="pages/lf_processor.html">Lost & Found (LF) Processor</a>
+              </td>
+              <td>Lost & Found (LF) Database Reconstruction</td>
+            </tr>
+            <tr>
+              <td>
+                <a href="pages/fingerprinter.html">Text Fingerprinter</a>
+              </td>
+              <td>Text "fingerprinting" for WiFi logs, plists, etc.</td>
+            </tr>
+            <tr>
+              <td><a href="pages/carver.html">Byte-Carver</a></td>
+              <td>Byte-Carver for corrupt databases</td>
+            </tr>
+            <tr>
+              <td><a href="pages/catalog.html">ARC Catalog</a></td>
+              <td>Artifact Recovery Catalog Manager</td>
+            </tr>
+            <tr>
+              <td><a href="pages/plotter.html">Plotter</a></td>
+              <td>Plotly Database Plotter</td>
+            </tr>
+            <tr>
+              <td><a href="pages/report_modules.html">Report Modules</a></td>
+              <td>Report Modules overview for developers</td>
+            </tr>
+            <tr>
+              <td><a href="pages/wifi_report.html">WiFi Report</a></td>
+              <td>Report Module</td>
+            </tr>
+            <tr>
+              <td><a href="pages/biome_parser.html">Biome Parser</a></td>
+              <td>Report Module</td>
+            </tr>
+            <tr>
+              <td><a href="pages/firefox_cache.html">Firefox Cache Parser</a></td>
+              <td>Report Module</td>
+            </tr>
+            <tr>
+              <td><a href="pages/firefox_jsonlz4.html">Firefox JSONLZ4 Parser</a></td>
+              <td>Report Module</td>
+            </tr>
+          </table>
+        </section>
+
+        <!-- TERMINOLOGY -->
+        <section id="terminology">
+          <h2>Terminology</h2>
+          <p>Key terms used throughout MARS:</p>
+
+          <table>
+            <tr>
+              <th>Term</th>
+              <th>Definition</th>
+            </tr>
+            <tr>
+              <td><strong>Exemplar</strong></td>
+              <td>
+                A reference scan from a known-good system; provides the "source of truth" for
+                database schemas
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Candidate</strong></td>
+              <td>Carved or recovered files being analyzed and classified against the exemplar</td>
+            </tr>
+            <tr>
+              <td><strong>Rubric</strong></td>
+              <td>
+                A JSON schema definition extracted from an exemplar database, used for matching
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Catalog</strong></td>
+              <td>
+                Exact schema matches – recovered databases that perfectly match exemplar schemas
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Metamatch</strong></td>
+              <td>
+                Non-catalog matches – recovered candidate databases with intact data. Those with
+                identical schemas are combined and deduplicated
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Found Data</strong></td>
+              <td>
+                L&F fragments with match hints (NEAREST) or no match (ORPHAN). Low confidence data
+                requiring manual review - not intact databases
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Variant</strong></td>
+              <td>
+                SQLite recovery method: O=Original, C=Clone, R=Recover (.recover command), D=Dissect
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Lost & Found</strong></td>
+              <td>SQLite's internal recovery mechanism for damaged database pages</td>
+            </tr>
+            <tr>
+              <td><strong>Schema Fingerprint</strong></td>
+              <td>Hash-based identifier enabling O(1) instant matching of database schemas</td>
+            </tr>
+            <tr>
+              <td><strong>FDA</strong></td>
+              <td>
+                Full Disk Access – macOS permission required to read protected system databases
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Package</strong></td>
+              <td>A shareable exemplar bundle containing schemas, rubrics, and a manifest.json</td>
+            </tr>
+          </table>
+        </section>
+
+        <footer class="footer">
+          <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+        </footer>
+      </main>
+    </div>
+
+    <button class="theme-toggle" onclick="toggleTheme()">☀️ Light</button>
+    <script>
+      (function () {
+        // Dark mode is default - only switch to light if explicitly saved
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "🌙 Dark";
+        } else {
+          // Default to dark mode
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "🌙 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "☀️ Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

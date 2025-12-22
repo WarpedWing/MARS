@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MARS Plotter - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#reports" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>MARS Plotter</h1>
+<p>Interactive timeline visualization module for exploring recovered SQLite database data.</p>
+<h2>Features</h2>
+<h3>Automatic Column Detection</h3>
+<p>The plotter automatically identifies plottable data by finding:</p>
+<ul>
+<li><strong>Timestamp columns</strong>: Identified via rubric metadata or column name patterns</li>
+<li><strong>Numeric columns</strong>: INTEGER and REAL columns suitable for Y-axis plotting</li>
+</ul>
+<h3>Multi-Database Support</h3>
+<p>Select and combine up to 5 series from different databases:</p>
+<ul>
+<li>Mix exemplar and candidate scan data</li>
+<li>Compare metrics across different artifacts</li>
+<li>Overlay related time series for correlation analysis</li>
+</ul>
+<h3>Chart Types</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Line</strong></td>
+<td>Continuous time series, default for single series</td>
+</tr>
+<tr>
+<td><strong>Step</strong></td>
+<td>Binary (0/1) data, automatically detected</td>
+</tr>
+<tr>
+<td><strong>Scatter</strong></td>
+<td>Sparse or irregular data points</td>
+</tr>
+<tr>
+<td><strong>Bar</strong></td>
+<td>Aggregated counts, automatically time-binned</td>
+</tr>
+<tr>
+<td><strong>Overlay</strong></td>
+<td>Comparing 1-2 series on same axes</td>
+</tr>
+<tr>
+<td><strong>Stacked</strong></td>
+<td>Multiple series in vertically aligned panels</td>
+</tr>
+</tbody>
+</table>
+<h3>Interactive Features</h3>
+<p>Generated HTML charts include:</p>
+<ul>
+<li>Pan and zoom</li>
+<li>Hover tooltips with data values</li>
+<li>Series toggle (click legend to show/hide)</li>
+<li>Range selection</li>
+<li>Export to PNG (via Plotly toolbar, or with Kaleido in MARS)</li>
+</ul>
+<h3>Timestamp Format Support</h3>
+<p>The plotter handles various macOS timestamp formats:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mac_absolute_time</code></td>
+<td>Seconds since 2001-01-01 (Core Data, many Apple DBs)</td>
+</tr>
+<tr>
+<td><code>unix_seconds</code></td>
+<td>Seconds since 1970-01-01</td>
+</tr>
+<tr>
+<td><code>unix_milliseconds</code></td>
+<td>Milliseconds since 1970-01-01</td>
+</tr>
+<tr>
+<td><code>webkit_timestamp</code></td>
+<td>Microseconds since 1601-01-01 (Chrome/WebKit)</td>
+</tr>
+<tr>
+<td>ISO 8601 strings</td>
+<td>Parsed automatically</td>
+</tr>
+</tbody>
+</table>
+<h2>Module Components</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sqlite_plotter.py</code></td>
+<td>Core REPL interface and series selection UI</td>
+</tr>
+<tr>
+<td><code>rendering.py</code></td>
+<td>Plotly figure creation and HTML generation</td>
+</tr>
+<tr>
+<td><code>db.py</code></td>
+<td>Database interaction, schema detection, data fetching</td>
+</tr>
+<tr>
+<td><code>selection_buffer.py</code></td>
+<td>Multi-database series accumulation (max 5 series)</td>
+</tr>
+<tr>
+<td><code>utils.py</code></td>
+<td>Time handling, binning, formatting utilities</td>
+</tr>
+<tr>
+<td><code>tui.py</code></td>
+<td>Rich-based terminal UI styling</td>
+</tr>
+</tbody>
+</table>
+<h2>Workflow</h2>
+<h3>Interactive Mode</h3>
+<ol>
+<li><strong>Source Selection</strong>: Choose between Exemplar or Candidate databases</li>
+<li><strong>Database Selection</strong>: Pick from plottable databases (pre-filtered)</li>
+<li><strong>Table Selection</strong>: Choose table with timestamp and numeric columns</li>
+<li><strong>Column Selection</strong>: Select Y-axis columns to plot</li>
+<li><strong>Label Column</strong> (optional): Select TEXT column for hover tooltips</li>
+<li><strong>Chart Configuration</strong>: Choose type, timezone, dark mode</li>
+<li><strong>Export</strong>: HTML saved to <code>reports/plots/</code>, opens in browser</li>
+</ol>
+<h3>Series Buffer</h3>
+<p>The selection buffer accumulates series across multiple database selections:</p>
+<pre><code class="language-text">Buffer: [Series 1] [Series 2] [Series 3] ... (max 5)
+         ↑ from DB A  ↑ from DB B  ↑ from DB A
+</code></pre>
+<p>Render when ready to generate combined visualization.</p>
+<h2>Output</h2>
+<p>Charts are saved to:</p>
+<pre><code class="language-text">output/MARS_*/reports/plots/
+</code></pre>
+<p>Filename format: <code>{db_name}_{table}_{columns}_{timestamp}.html</code></p>
+<h2>Data Processing</h2>
+<h3>Time Window Filtering</h3>
+<p>Optionally restrict plots to specific date ranges to focus on relevant time periods.</p>
+<h3>Rolling Mean Smoothing</h3>
+<p>Apply moving average smoothing to noisy time series data.</p>
+<h3>Binary Detection</h3>
+<p>Series containing only 0 and 1 values are automatically rendered as step functions for clarity.</p>
+<h3>Intelligent Binning</h3>
+<p>Bar charts automatically compute appropriate time bins based on data range:</p>
+<ul>
+<li>Sub-day ranges: Minute/hour bins</li>
+<li>Multi-day ranges: Day bins</li>
+<li>Multi-month ranges: Week/month bins</li>
+</ul>
+<h2>Integration</h2>
+<p>The plotter integrates with MARS via:</p>
+<ul>
+<li><strong>CLI entry</strong>: Main menu → Chart Plotter</li>
+<li><strong>Project context</strong>: Accesses exemplar and candidate scan results</li>
+<li><strong>Rubric system</strong>: Uses schema rubrics for timestamp format detection</li>
+</ul>
+<h2>Dependencies</h2>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Required</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>plotly</code></td>
+<td>Yes</td>
+<td>Interactive chart generation</td>
+</tr>
+<tr>
+<td><code>rich</code></td>
+<td>Yes</td>
+<td>Terminal UI</td>
+</tr>
+<tr>
+<td><code>kaleido</code></td>
+<td>No</td>
+<td>PDF/PNG static export</td>
+</tr>
+</tbody>
+</table>
+<h2>Usage Tips</h2>
+<ul>
+<li><strong>Start with single series</strong> to understand data patterns before combining</li>
+<li><strong>Use overlay for comparison</strong> when series share similar scales</li>
+<li><strong>Use stacked for correlation</strong> when comparing different metrics</li>
+<li><strong>Check rubric availability</strong> if timestamp conversion seems wrong</li>
+<li><strong>Export PNG</strong> from Plotly toolbar for reports (or use Kaleido for scripted export)</li>
+</ul>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

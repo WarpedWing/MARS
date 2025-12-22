@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lost & Found (LF) Processor - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#additional_docs" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Lost &amp; Found (LF) Database Reconstruction</h1>
+<p>This module handles the reconstruction of SQLite databases from fragmented data
+recovered from disk images. When SQLite databases are carved from
+raw disk images, they often contain <code>lost_and_found</code> tables with orphaned
+data fragments. This processor matches these fragments against known database
+schemas (exemplars) and reconstructs coherent databases.</p>
+<h2>Processing Modes</h2>
+<p>Four modes handle recovered fragments based on their match quality
+and processing requirements.</p>
+<h2>The Four Modes</h2>
+<h3>MERGE: Metamatch Groups</h3>
+<p><strong>Multiple databases with identical schemas that don't match any exemplar</strong></p>
+<p>When multiple recovered databases share identical table and column structures
+but don't match any known exemplar, they're grouped by schema hash and
+processed together. The schema hash is computed from both table names AND
+column names, so only truly identical schemas are grouped.</p>
+<p><strong>Processing:</strong></p>
+<ol>
+<li>Group databases by schema hash (tables + columns)</li>
+<li>Combine all databases in the group</li>
+<li>Generate a "superrubric" from the merged database</li>
+<li>Match lost_and_found fragments against the superrubric</li>
+<li>Reconstruct combined database with both intact and recovered data</li>
+</ol>
+<p><strong>Output:</strong> <code>databases/metamatches/{group_label}/{group_label}.sqlite</code></p>
+<p><strong>Example:</strong> Three non-catalog databases,
+all with identical schema structure, combined into a single output database.</p>
+<h3>CATALOG: Exact Matches</h3>
+<p><strong>Databases with exact schema matches to known exemplars</strong></p>
+<p>When a recovered database exactly matches a known exemplar schema from
+the catalog, we can confidently reconstruct it using that exemplar's rubric.</p>
+<p><strong>Processing:</strong></p>
+<ol>
+<li>Match lost_and_found fragments against the exact exemplar rubric</li>
+<li>Reconstruct database using the canonical exemplar schema</li>
+<li>Combine intact data + matched fragments from all matching databases</li>
+<li>Create remnant databases for unmatched fragments</li>
+</ol>
+<p><strong>Output:</strong> <code>databases/catalog/{exemplar_name}/{exemplar_name}.sqlite</code></p>
+<p><strong>Example:</strong> A Chrome history database that exactly matches the known
+Chrome exemplar schema.</p>
+<h3>NEAREST: Best-Fit Exemplar</h3>
+<p><strong>Databases matched to nearest (but not exact) exemplar</strong></p>
+<p>When a database doesn't exactly match any exemplar but is close enough for
+useful reconstruction, we match it to the nearest exemplar schema.</p>
+<p><strong>Processing:</strong></p>
+<ol>
+<li>Find nearest matching exemplar based on schema similarity</li>
+<li>Match lost_and_found fragments against nearest exemplar rubric</li>
+<li>Reconstruct database using nearest exemplar schema as template</li>
+<li>Initially output to <code>found_data/</code>, then reclassified in Phase 7</li>
+</ol>
+<p><strong>Final Output:</strong> If L&amp;F rows recovered → <code>databases/catalog/{exemplar_name}/</code>
+(merged with existing CATALOG entry or created new). If no recovery → <code>databases/empty/</code>.</p>
+<p><strong>Example:</strong> A database with L&amp;F fragments that resemble Firefox Places.
+After reconstruction, if fragments were recovered, the output is promoted to
+<code>catalog/Firefox Places/</code>.</p>
+<h3>ORPHAN: Unmatched Tables</h3>
+<p><strong>Lost &amp; found fragments that don't match any schema</strong></p>
+<p>When lost_and_found fragments can't be matched to any exemplar (catalog,
+metamatch, or nearest), they're preserved as "orphans" for manual review.</p>
+<p><strong>Processing:</strong></p>
+<ol>
+<li>Collect all unmatched lost_and_found tables across MERGE/CATALOG/NEAREST</li>
+<li>Create standalone databases preserving the original fragment structure</li>
+<li>Name using match hints when available (e.g., database had partial matches)</li>
+</ol>
+<p><strong>Output:</strong> <code>databases/found_data/{match_label}_{db_name}_orphans/{match_label}_{db_name}_orphans.sqlite</code></p>
+<p><strong>Example:</strong> Fragments from an unknown application database that don't
+match any known schema.</p>
+<h2>Processing Order &amp; Rationale</h2>
+<p>The orchestrator processes use cases in this specific order:</p>
+<h3>Phase 1: Prepare Split Databases</h3>
+<p>Extract lost_and_found tables from all recovered databases into separate
+"split" databases for matching.</p>
+<h3>Phase 2: Group Databases</h3>
+<p>Classify databases into catalog matches, metamatch groups, or individual
+databases based on their schema matching results.</p>
+<h3>Phase 3: MERGE</h3>
+<p>Metamatch processing combines multiple databases and generates
+superrubrics. Metamatches:</p>
+<ul>
+<li>Creates new composite schemas that might help match fragments</li>
+<li>Reduces the number of databases to process in later phases</li>
+</ul>
+<h3>Phase 4: CATALOG</h3>
+<p>Catalog matches are high-confidence exact matchesthat use canonical
+schemas for highest quality reconstruction.</p>
+<h3>Phase 5: NEAREST</h3>
+<p>For databases that don't fit MERGE or CATALOG, NEAREST attempts to
+match their L&amp;F fragments against the most similar exemplar schema.
+Processing them after exact matches:</p>
+<ul>
+<li>Ensures we've exhausted higher-confidence matching strategies first</li>
+<li>Provides match hints for fragments that resemble known schemas</li>
+<li>Rebuilds using the nearest exemplar schema as template</li>
+<li>Results go to <code>found_data/</code> initially (may be promoted to <code>catalog/</code> in Phase 7)</li>
+</ul>
+<h3>Phase 6: ORPHAN</h3>
+<p>Orphan processing collects <strong>all unmatched fragments</strong> from
+MERGE/CATALOG/NEAREST. Must run last because:</p>
+<ul>
+<li>Needs to know which fragments were successfully matched in previous phases</li>
+<li>Only processes remnants that couldn't be matched anywhere else</li>
+<li>Preserves everything for manual forensic review</li>
+</ul>
+<h3>Phase 7: Reclassification</h3>
+<p>NEAREST results initially go to <code>found_data/</code> because they're based on
+schema similarity rather than exact matches. However, NEAREST <strong>rebuilds
+databases using the exemplar schema as template</strong>, making them structurally
+compatible with CATALOG results.</p>
+<p>Phase 7 reclassifies NEAREST results based on recovery success:</p>
+<ol>
+<li>
+<p><strong>Successful recovery</strong> (<code>total_lf_rows &gt; 0</code>): Promoted to <code>catalog/</code>.
+   Since NEAREST outputs use the exemplar schema, they can be merged with
+   existing CATALOG entries for the same exemplar.</p>
+</li>
+<li>
+<p><strong>No recovery</strong> (<code>total_lf_rows == 0</code>): Moved to <code>empty/</code>—matched a
+   schema but had no recoverable L&amp;F fragments.</p>
+</li>
+<li>
+<p><strong>Orphans</strong> (no manifest): Remain in <code>found_data/</code> for manual review.</p>
+</li>
+</ol>
+<p>Phase 7 also scans <code>catalog/</code> for databases that are effectively empty
+(only contain ignorable tables like <code>sqlite_sequence</code>) and moves them to <code>empty/</code>.</p>
+<h2>Output Directory Structure</h2>
+<pre><code class="language-text">databases/
+├── selected_variants/                # Input: Variant selection results
+│   └── {f_offset}_{hash}/            # Best variant for each carved database
+│       └── {variant}.sqlite          # O/C/R/D variant chosen
+│
+├── catalog/                          # CATALOG + promoted NEAREST
+│   └── {exemplar_name}/
+│       ├── {exemplar_name}.sqlite
+│       ├── {exemplar_name}_manifest.json
+│       └── rejected/
+│           └── {exemplar_name}_rejected.sqlite
+│
+├── metamatches/                      # MERGE: Identical schema groups
+│   └── {group_label}/
+│       ├── {group_label}.sqlite
+│       ├── {group_label}_manifest.json
+│       └── rejected/
+│           └── {group_label}_rejected.sqlite
+│
+├── found_data/                       # ORPHAN
+│   └── {match_hint}_{db_name}_orphans/
+│       └── {match_hint}_{db_name}_orphans.sqlite
+│
+├── empty/                            # Databases with no recoverable data
+│   └── {exemplar_name}/              # Matched schema but total_lf_rows == 0
+│
+├── carved/                           # Byte-carved residue (variant X)
+│   └── {exemplar_name}_{f_offset}_carved/
+│       └── {exemplar_name}_{f_offset}_carved.sqlite
+│
+└── schemas/                          # Generated rubrics and schemas
+    ├── {exemplar_name}/
+    │   └── {exemplar_name}.rubric.json
+    └── {group_label}/
+        └── {group_label}.superrubric.json
+</code></pre>
+<h2>Manifest Files</h2>
+<p>Each reconstructed database includes a <code>*_manifest.json</code> file documenting:</p>
+<ul>
+<li><strong>Source databases</strong>: Which original databases contributed data</li>
+<li><strong>Intact rows</strong>: Rows copied from original database tables</li>
+<li><strong>LF rows</strong>: Rows recovered from lost_and_found fragments</li>
+<li><strong>Remnant tables</strong>: Number of unmatched fragments</li>
+<li><strong>Duplicates removed</strong>: Deduplication statistics</li>
+<li><strong>Table-level stats</strong>: Row counts per table</li>
+</ul>
+<p>Example manifest:</p>
+<pre><code class="language-json">{
+  &quot;output_type&quot;: &quot;catalog&quot;,
+  &quot;output_name&quot;: &quot;Chrome_History&quot;,
+  &quot;created&quot;: &quot;2025-01-18T10:30:00&quot;,
+  &quot;source_databases&quot;: [
+    {
+      &quot;db_name&quot;: &quot;f12345678&quot;,
+      &quot;intact_rows&quot;: 1500,
+      &quot;lf_rows&quot;: 342,
+      &quot;remnant_tables&quot;: 2
+    }
+  ],
+  &quot;combined_stats&quot;: {
+    &quot;total_intact_rows&quot;: 1500,
+    &quot;total_lf_rows&quot;: 342,
+    &quot;total_remnant_tables&quot;: 2,
+    &quot;duplicates_removed&quot;: 45,
+    &quot;table_stats&quot;: [
+      {&quot;name&quot;: &quot;urls&quot;, &quot;rows&quot;: 1200},
+      {&quot;name&quot;: &quot;visits&quot;, &quot;rows&quot;: 642}
+    ]
+  }
+}
+</code></pre>
+<h2>Data Source Tracking</h2>
+<p>All reconstructed databases include a <code>data_source</code> column in every table
+(except FTS virtual tables) to track data provenance:</p>
+<ul>
+<li><code>carved_{db_name}</code>: Intact data from carved database</li>
+<li><code>found_{db_name}</code>: Reconstructed data from lost_and_found fragments</li>
+</ul>
+<p>This allows forensic analysts to distinguish between original intact
+data and recovered fragments, which can be especially helpful when
+combining with exemplar data.</p>
+<h2>Key Modules</h2>
+<h3>Orchestrator</h3>
+<ul>
+<li><strong><code>lf_orchestrator.py</code></strong>: Main orchestrator coordinating all 7 phases</li>
+</ul>
+<h3>Processor Modules</h3>
+<ul>
+<li><strong><code>lf_merge.py</code></strong>: MERGE - Metamatch group processing</li>
+<li><strong><code>lf_catalog.py</code></strong>: CATALOG - Exact match processing</li>
+<li><strong><code>lf_nearest.py</code></strong>: NEAREST - Best-fit exemplar matching</li>
+<li><strong><code>lf_orphan.py</code></strong>: ORPHAN - Unmatched table preservation</li>
+</ul>
+<h3>Shared Logic</h3>
+<ul>
+<li><strong><code>lf_reconstruction.py</code></strong>: Shared reconstruction logic for CATALOG/NEAREST</li>
+<li><strong><code>uc_helpers.py</code></strong>: Utility functions (FTS detection, labeling, sanitization)</li>
+</ul>
+<h3>Core Components</h3>
+<ul>
+<li><strong><code>lf_matcher.py</code></strong>: Fragment-to-exemplar matching engine with schema validation</li>
+<li><strong><code>lf_combiner.py</code></strong>: Fragment combination and column mapping</li>
+<li><strong><code>db_reconstructor.py</code></strong>: Low-level database reconstruction</li>
+<li><strong><code>lf_splitter.py</code></strong>: Extract lost_and_found tables into split databases</li>
+</ul>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

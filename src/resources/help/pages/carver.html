@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MARS Carver - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#candidates-scan" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Carver Module</h1>
+<p>Deep data carving and extraction for SQLite databases and binary artifacts.</p>
+<h2>Purpose</h2>
+<p>Extract forensic artifacts from:</p>
+<ul>
+<li>Corrupt SQLite databases</li>
+<li>Database pages outside proper structure</li>
+<li>Binary blobs (protobuf, plist, JSON)</li>
+<li>Timestamp data in various formats</li>
+<li>URLs and identifiers</li>
+</ul>
+<h2>Module Components</h2>
+<h3>Main SQLite Carver</h3>
+<p><code>carve_sqlite.py</code></p>
+<p><strong>Extracts data from SQLite database pages</strong></p>
+<p><strong>Extraction Targets:</strong></p>
+<ul>
+<li>Timestamps (multiple formats)</li>
+<li>URLs and web artifacts</li>
+<li>Text strings</li>
+<li>Protobuf blobs</li>
+<li>JSON structures</li>
+<li>Binary data patterns</li>
+</ul>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Parallel page processing</li>
+<li>Multiple timestamp classifiers</li>
+<li>URL analysis with Unfurl</li>
+<li>Protobuf decoding</li>
+<li>CSV/JSONL/DB output formats</li>
+</ul>
+<h2>Submodules</h2>
+<h3>Protobuf Handling</h3>
+<p><code>protobuf/</code></p>
+<p><strong>Decode and analyze protobuf binary data</strong></p>
+<ul>
+<li><code>decoder.py</code> - Decode protobuf blobs using blackboxprotobuf</li>
+<li><code>extractor.py</code> - Extract protobuf data from database pages</li>
+<li><code>timestamp_extractor.py</code> - Extract timestamps from protobuf</li>
+</ul>
+<h3>Timestamp Detection</h3>
+<p><code>timestamp/</code></p>
+<p><strong>Classify and extract timestamp data</strong></p>
+<ul>
+<li><code>types.py</code> - Classification types and data structures</li>
+<li><code>classifier.py</code> - Timestamp classification implementation</li>
+<li><code>patterns.py</code> - Timestamp pattern definitions</li>
+</ul>
+<p><strong>Supported Formats:</strong></p>
+<ul>
+<li>Unix timestamps (seconds, milliseconds, nanoseconds)</li>
+<li>Cocoa timestamps (macOS/iOS)</li>
+<li>Windows FILETIME</li>
+<li>Chrome timestamps</li>
+<li>WebKit timestamps</li>
+<li>ISO 8601 strings</li>
+<li>RFC 3339 strings</li>
+</ul>
+<h3>URL Analysis</h3>
+<p><code>unfurl/</code></p>
+<p><strong>Extract and analyze URLs and identifiers</strong></p>
+<ul>
+<li><code>analyzer.py</code> - URL parsing and timestamp extraction</li>
+<li><code>id_detectors.py</code> - Detect IDs in URLs (UUIDs, timestamps, etc.)</li>
+</ul>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Extract timestamps from URLs</li>
+<li>Detect UUID patterns</li>
+<li>Identify session IDs</li>
+<li>Parse query parameters</li>
+<li>Analyze URL structure</li>
+</ul>
+<hr />
+<h2>How Carving Works</h2>
+<h3>1. Database Page Iteration</h3>
+<pre><code class="language-python"># carve_sqlite.py main loop
+for page_num in range(total_pages):
+    page_data = read_page(db_file, page_num, page_size)
+    results = process_page(page_data, page_num)
+</code></pre>
+<h3>2. Data Extraction Per Page</h3>
+<p>For each database page:</p>
+<p><strong>1. Timestamp Detection</strong></p>
+<ul>
+<li>Scan for numeric values</li>
+<li>Classify as timestamp types</li>
+<li>Filter by confidence threshold</li>
+<li>Deduplicate close timestamps</li>
+</ul>
+<p><strong>2. URL Extraction</strong></p>
+<ul>
+<li>Regex patterns for URLs</li>
+<li>HTTP/HTTPS schemes</li>
+<li>Parse with Unfurl</li>
+<li>Extract embedded timestamps/IDs</li>
+</ul>
+<p><strong>3. Text Extraction</strong></p>
+<ul>
+<li>Printable ASCII strings</li>
+<li>Minimum length filtering</li>
+<li>Context preservation</li>
+</ul>
+<p><strong>4. Binary Blob Extraction</strong></p>
+<ul>
+<li>Protobuf detection</li>
+<li>Decode with blackboxprotobuf</li>
+<li>Extract nested timestamps</li>
+</ul>
+<h3>3. Output Generation</h3>
+<p>Results written to:</p>
+<ul>
+<li><strong>CSV</strong>: Timestamp inventory (optional)</li>
+<li><strong>JSONL</strong>: Detailed extraction data</li>
+<li><strong>Database</strong>: Structured SQLite output</li>
+</ul>
+<h3>Basic Database Carving</h3>
+<p><strong>Output:</strong></p>
+<pre><code class="language-text">Carved/
+  corrupt_timestamps.csv      # All timestamps found
+  corrupt_carved.jsonl        # Detailed extraction data
+  corrupt_carved.db           # Structured database
+</code></pre>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Firefox JSONLZ4 Parser - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#report_modules" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Firefox JSONLZ4 Salvage Parser</h1>
+<p>This module salvages Firefox JSONLZ4 (mozLz4) compressed JSON files, extracting sessions, bookmarks,
+and telemetry data from both intact and carved/truncated files.</p>
+<h2>Disclaimer</h2>
+<p><strong>This report is for informational and investigative purposes only.</strong> The data presented should be
+independently verified before being relied upon for any legal, regulatory, or evidentiary purpose.</p>
+<h3>Limitations</h3>
+<ul>
+<li><strong>Partial data recovery</strong>: Carved or truncated files may yield incomplete data. The parser uses
+progressive decompression and JSON repair heuristics, but some records may be lost or corrupted.</li>
+<li><strong>JSON repair heuristics</strong>: Corrupted JSON is repaired using multi-stage heuristics (brace
+balancing, escape fixing, truncation recovery). Repaired JSON may not perfectly represent the original data.</li>
+<li><strong>Telemetry structure variance</strong>: Firefox telemetry JSON structure varies across Firefox versions.
+Some fields may be missing or differently named in older/newer versions.</li>
+<li><strong>Timestamp interpretation</strong>: Session timestamps represent last-accessed times, not necessarily
+when tabs were first opened. Bookmark timestamps may reflect import dates rather than original creation.</li>
+<li><strong>Deduplication</strong>: The parser deduplicates extracted records within a single run. Records may
+appear duplicated across multiple source files from the same profile.</li>
+</ul>
+<h2>What Are JSONLZ4 Files?</h2>
+<p>Firefox uses a custom LZ4-based compression format called "mozLz4" for storing JSON data. These
+files have a <code>mozLz40\0</code> magic header followed by LZ4-compressed JSON content.</p>
+<p>Common JSONLZ4 files include:</p>
+<ul>
+<li><strong>Session files</strong> (<code>sessionstore.jsonlz4</code>, <code>recovery.jsonlz4</code>): Open tabs, closed tabs, window state</li>
+<li><strong>Bookmarks</strong> (<code>bookmarks.jsonlz4</code>): Bookmark tree with folders and URLs</li>
+<li><strong>Telemetry</strong> (<code>*.jsonlz4</code> in datareporting): Browser metrics and events</li>
+</ul>
+<h2>Salvage Capabilities</h2>
+<p>This module is specifically designed for forensic recovery from:</p>
+<ul>
+<li><strong>Carved files</strong>: JSONLZ4 segments extracted from disk images or unallocated space</li>
+<li><strong>Truncated files</strong>: Partially overwritten or incomplete files</li>
+<li><strong>Corrupted files</strong>: Files with bit errors or missing data</li>
+</ul>
+<h3>Recovery Techniques</h3>
+<ol>
+<li><strong>Segment detection</strong>: Scans files for <code>mozLz40\0</code> magic bytes to find embedded JSONLZ4 segments</li>
+<li><strong>Progressive tail trimming</strong>: Attempts decompression with progressively shorter input until success</li>
+<li><strong>Partial decompression</strong>: Uses liblz4 C library for partial decompression when available</li>
+<li><strong>JSON repair</strong>: Multi-stage repair process:</li>
+<li>Control character removal</li>
+<li>Backslash escape fixing</li>
+<li>Brace/bracket balancing</li>
+<li>Truncation to last valid JSON boundary</li>
+</ol>
+<h2>Parsed Data</h2>
+<h3>Sessions</h3>
+<p>Extracted from session restore files:</p>
+<ul>
+<li><strong>Tab URLs</strong>: URLs from open and recently closed tabs</li>
+<li><strong>Last accessed</strong>: Timestamp of last tab interaction</li>
+<li><strong>Window context</strong>: Which window/tab group contained the tab</li>
+</ul>
+<h3>Bookmarks</h3>
+<p>Extracted from bookmark backup files:</p>
+<ul>
+<li><strong>Title</strong>: Bookmark display name</li>
+<li><strong>URL</strong>: Bookmarked URI</li>
+<li><strong>Date added</strong>: When bookmark was created</li>
+<li><strong>Date modified</strong>: Last modification timestamp</li>
+<li><strong>Folder path</strong>: Location in bookmark hierarchy</li>
+</ul>
+<h3>Telemetry Events</h3>
+<p>Extracted from telemetry event files:</p>
+<ul>
+<li><strong>Timestamp</strong>: Event occurrence time</li>
+<li><strong>Category</strong>: Event category (e.g., "navigation", "security")</li>
+<li><strong>Method</strong>: Event action type</li>
+<li><strong>Object</strong>: Target of the event</li>
+<li><strong>Value</strong>: Event payload</li>
+</ul>
+<h3>Telemetry Metrics</h3>
+<p>Extracted from telemetry main ping files:</p>
+<ul>
+<li><strong>Metric name</strong>: Flattened metric path</li>
+<li><strong>Value</strong>: Metric value (histograms, scalars, etc.)</li>
+<li><strong>Process</strong>: Which Firefox process generated the metric</li>
+</ul>
+<h2>Data Sources</h2>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Path Pattern</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Session store</td>
+<td><code>sessionstore.jsonlz4</code></td>
+<td>Current session state</td>
+</tr>
+<tr>
+<td>Session backup</td>
+<td><code>sessionstore-backups/*.jsonlz4</code></td>
+<td>Session recovery files</td>
+</tr>
+<tr>
+<td>Bookmarks</td>
+<td><code>bookmarkbackups/*.jsonlz4</code></td>
+<td>Bookmark snapshots</td>
+</tr>
+<tr>
+<td>Telemetry</td>
+<td><code>datareporting/archived/**/*.jsonlz4</code></td>
+<td>Browser telemetry</td>
+</tr>
+<tr>
+<td>Carved files</td>
+<td><code>**/*.jsonlz4</code>, <code>**/*.mozlz4</code></td>
+<td>Recovered segments</td>
+</tr>
+</tbody>
+</table>
+<h2>Not Currently Parsed</h2>
+<ul>
+<li><strong>Session history</strong>: Individual tab navigation history within sessions</li>
+<li><strong>Form data</strong>: Saved form field values in session files</li>
+<li><strong>Pinned tabs</strong>: Tab pinning state</li>
+<li><strong>Container tabs</strong>: Multi-Account Container associations</li>
+<li><strong>Sync data</strong>: Firefox Sync encrypted payloads</li>
+</ul>
+<h2>Output Files</h2>
+<p>Four CSV files are generated:</p>
+<ul>
+<li><code>firefox_sessions.csv</code> - Tab URLs and access timestamps</li>
+<li>
+<p><code>source_file</code>, <code>url</code>, <code>last_accessed</code></p>
+</li>
+<li>
+<p><code>firefox_bookmarks.csv</code> - Bookmark entries</p>
+</li>
+<li>
+<p><code>source_file</code>, <code>title</code>, <code>url</code>, <code>date_added</code>, <code>date_modified</code></p>
+</li>
+<li>
+<p><code>firefox_telemetry_events.csv</code> - Flattened telemetry events</p>
+</li>
+<li>
+<p><code>source_file</code>, <code>timestamp</code>, <code>category</code>, <code>method</code>, <code>object</code>, <code>value</code>, <code>extra_*</code></p>
+</li>
+<li>
+<p><code>firefox_telemetry_main_metrics.csv</code> - Flattened telemetry metrics</p>
+</li>
+<li><code>source_file</code>, <code>metric</code>, <code>value</code>, <code>process</code></li>
+</ul>
+<h2>File Classification</h2>
+<p>When <code>--classify</code> is specified, source files are organized into categories:</p>
+<pre><code class="language-text">Firefox/
+  Sessions/      - Session restore files
+  Bookmarks/     - Bookmark backup files
+  Telemetry/     - Telemetry data files
+  Other/         - Valid mozLz4 JSON (unclassified type)
+Unknown/         - JSON parsed but not Firefox format
+Corrupt/         - No salvageable mozLz4 segments found
+</code></pre>
+<h2>Command-Line Options</h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--glob</code></td>
+<td>File pattern to match (default: <code>**/*.*lz4</code>)</td>
+</tr>
+<tr>
+<td><code>--append</code></td>
+<td>Append to existing CSV files instead of overwriting</td>
+</tr>
+<tr>
+<td><code>--classify</code></td>
+<td>Organize files: <code>move</code>, <code>copy</code>, <code>link</code>, or <code>none</code></td>
+</tr>
+<tr>
+<td><code>--preserve-tree</code></td>
+<td>Maintain source directory structure in classification</td>
+</tr>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Show what would be done without making changes</td>
+</tr>
+<tr>
+<td><code>--delete-source</code></td>
+<td>Delete source files after successful processing</td>
+</tr>
+</tbody>
+</table>
+<h2>Dependencies</h2>
+<ul>
+<li><code>lz4</code> Python library (required)</li>
+<li><code>liblz4</code> C library (optional, enables partial decompression)</li>
+</ul>
+<h2>Scan Type</h2>
+<p><strong>Exemplar AND Candidate</strong> - This module runs during both live system scans and carved file
+processing, making it particularly useful for forensic recovery scenarios.</p>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

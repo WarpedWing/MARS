@@ -1,0 +1,17 @@
+#!/bin/bash
+# mars-sudo - Run MARS with elevated privileges
+# Redirects uv cache to avoid permission issues after sudo exits
+#
+# Usage: ./bin/mars-sudo [args...]
+#
+# This script is called automatically when user selects "Live System" scan
+# and agrees to run with administrator privileges.
+
+set -e
+
+# Use temp cache to avoid polluting user's cache with root-owned files
+# The $$ ensures unique cache per invocation
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-mars-sudo-$$}"
+
+# Preserve environment (-E) so uv can find the project
+exec sudo -E uv run mars "$@"

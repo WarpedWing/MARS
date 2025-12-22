@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Firefox Cache Parser - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#report_modules" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Firefox Cache Parser</h1>
+<p>This module parses Firefox's cache2 directory structure to extract HTTP artifacts including URLs,
+response headers, and cached content.</p>
+<h2>Disclaimer</h2>
+<p><strong>This report is for informational and investigative purposes only.</strong> The data presented should be
+independently verified before being relied upon for any legal, regulatory, or evidentiary purpose.</p>
+<h3>Limitations</h3>
+<ul>
+<li><strong>Cache eviction</strong>: Firefox automatically evicts old cache entries. The cache represents a partial
+snapshot of browsing activity, not a complete history.</li>
+<li><strong>Content-Type detection</strong>: When HTTP headers are unavailable or incomplete, file type detection
+falls back to magic byte signatures. This heuristic may misidentify some content types.</li>
+<li><strong>Compressed content</strong>: Gzip-compressed responses are automatically decompressed. Truncated or
+corrupted compressed data may fail to decompress fully.</li>
+<li><strong>Private browsing</strong>: Content accessed in private/incognito mode is not written to the disk cache.</li>
+<li><strong>Cache integrity</strong>: Individual cache entries may be corrupted, truncated, or partially
+overwritten. SHA256 hashes verify extracted content integrity.</li>
+<li><strong>Timestamp accuracy</strong>: Cache metadata timestamps reflect when content was cached, not necessarily when it was first accessed.</li>
+</ul>
+<h2>What Is Firefox Cache2?</h2>
+<p>Firefox stores HTTP cache data in a binary format under the <code>cache2/</code> directory within each profile.
+Each cached resource is stored as a separate file with a SHA1-based filename in the <code>entries/</code> subdirectory.</p>
+<p>Cache entries contain:</p>
+<ul>
+<li>The cached HTTP response body</li>
+<li>HTTP response headers (status, content-type, cache-control, etc.)</li>
+<li>Request metadata (URL, method, security info)</li>
+<li>Cache management data (frecency scores, expiration times)</li>
+</ul>
+<h2>Parsed Data</h2>
+<h3>Cache Entry Metadata</h3>
+<p>For each cache entry, the parser extracts:</p>
+<ul>
+<li><strong>URL</strong>: The original request URL</li>
+<li><strong>HTTP headers</strong>: Response status, content-type, content-length, encoding, date, expires, ETag, cache-control</li>
+<li><strong>Security info</strong>: Base64-encoded TLS/SSL certificate data</li>
+<li><strong>Cache metadata</strong>: Entry size, frecency score, fetch count, last fetch/modification times</li>
+</ul>
+<h3>Index and Journal Files</h3>
+<p>When available, the parser also processes:</p>
+<ul>
+<li><strong>index file</strong>: Master cache index with entry metadata and file size information</li>
+<li><strong>index.log (journal)</strong>: Recent cache operations log</li>
+</ul>
+<h3>Body Extraction</h3>
+<p>Optionally, cached content bodies can be exported:</p>
+<ul>
+<li><strong>Copy mode</strong>: Extracts and decompresses content to a separate directory</li>
+<li><strong>Symlink mode</strong>: Creates symlinks to original cache files (preserves disk space)</li>
+</ul>
+<p>File extensions are determined by content-type headers or magic byte detection.</p>
+<h2>Data Sources</h2>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Path Pattern</th>
+<th>Firefox Versions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cache entries</td>
+<td><code>~/Library/Caches/Firefox/Profiles/*/cache2/entries/*</code></td>
+<td>32+</td>
+</tr>
+<tr>
+<td>Cache index</td>
+<td><code>~/Library/Caches/Firefox/Profiles/*/cache2/index</code></td>
+<td>32+</td>
+</tr>
+<tr>
+<td>Cache journal</td>
+<td><code>~/Library/Caches/Firefox/Profiles/*/cache2/index.log</code></td>
+<td>32+</td>
+</tr>
+</tbody>
+</table>
+<p>Note: Firefox 32 (2014) introduced the cache2 format, replacing the older cache v1 format.</p>
+<h2>Not Currently Parsed</h2>
+<ul>
+<li><strong>Cache v1 format</strong>: Legacy Firefox cache format (pre-Firefox 32)</li>
+<li><strong>Memory cache</strong>: In-memory cached content is not persisted to disk</li>
+<li><strong>Service worker caches</strong>: Stored separately from the HTTP cache</li>
+<li><strong>Encrypted content</strong>: HTTPS response bodies are stored encrypted in some configurations</li>
+</ul>
+<h2>Output Files</h2>
+<ul>
+<li><code>firefox_cache_entries.csv</code> - All parsed cache entries with 50+ columns including:</li>
+<li><code>entry_name</code> - SHA1-based cache filename</li>
+<li><code>source_file</code> - Full path to cache entry file</li>
+<li><code>url</code> - Original request URL</li>
+<li><code>request_method</code> - HTTP method (GET, POST, etc.)</li>
+<li><code>status_line</code> - HTTP response status</li>
+<li><code>content_type</code>, <code>content_length</code>, <code>content_encoding</code></li>
+<li><code>response_date</code>, <code>expires</code>, <code>etag</code>, <code>last_modified</code></li>
+<li><code>cache_control</code>, <code>pragma</code></li>
+<li><code>security_info_b64</code> - TLS certificate data</li>
+<li><code>metadata_size</code>, <code>body_size</code>, <code>decompressed_size</code></li>
+<li><code>body_sha256</code> - Content hash for integrity verification</li>
+<li>Index metadata (when available): <code>frecency</code>, <code>flags</code>, <code>last_fetched</code>, <code>last_modified_idx</code>, <code>file_size_kb</code></li>
+<li>
+<p><code>dump_body_path</code> - Path to extracted body (if <code>--dump-bodies</code> used)</p>
+</li>
+<li>
+<p><code>firefox_cache_bodies/</code> (optional) - Directory containing extracted/decompressed cache bodies with appropriate file extensions</p>
+</li>
+</ul>
+<h2>Command-Line Options</h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--index-file</code></td>
+<td>Path to cache index file</td>
+</tr>
+<tr>
+<td><code>--journal-file</code></td>
+<td>Path to index.log journal file</td>
+</tr>
+<tr>
+<td><code>--dump-bodies</code></td>
+<td>Extract cached content to output directory</td>
+</tr>
+<tr>
+<td><code>--dump-mode</code></td>
+<td><code>copy</code> (default) or <code>link</code> for body extraction</td>
+</tr>
+</tbody>
+</table>
+<h2>Magic Byte Detection</h2>
+<p>When content-type headers are missing, the parser detects file types by magic bytes:</p>
+<ul>
+<li>Images: JPEG, PNG, GIF, WebP, ICO, BMP, TIFF, AVIF</li>
+<li>Documents: PDF, HTML</li>
+<li>Archives: ZIP, GZIP</li>
+<li>Media: MP4, WebM, MP3, OGG, WAV, FLAC</li>
+<li>Fonts: WOFF, WOFF2, TTF, OTF</li>
+<li>Data: JSON, XML, JavaScript, CSS, WASM</li>
+</ul>
+<h2>Scan Type</h2>
+<p><strong>Exemplar only</strong> - This module runs during live system scans to capture current Firefox cache state.</p>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

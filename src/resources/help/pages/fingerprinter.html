@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Text Fingerprinter - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#additional_docs" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Fingerprinter Module</h1>
+<p>File fingerprinting for accurate type detection.</p>
+<h2>Purpose</h2>
+<p>Analyze files to determine their type and structure <strong>without</strong> relying solely
+on file extensions or metadata. Essential for processing carved files where
+metadata is often lost.</p>
+<h2>Module Components</h2>
+<h3><code>text_fingerprinter.py</code> - Text Log Detection</h3>
+<p><strong>Identifies log types from text content</strong></p>
+<pre><code class="language-python">from mars.pipeline.fingerprinter.text_fingerprinter import (
+    LogType,
+    identify_log_type,
+)
+
+# Identify log type
+result = identify_log_type(
+    file_path=Path(&quot;./unknown.log&quot;),
+    min_confidence=0.6
+)
+
+print(f&quot;Type: {result.log_type}&quot;)
+print(f&quot;Confidence: {result.confidence}&quot;)
+print(f&quot;Reasons: {result.reasons}&quot;)
+print(f&quot;First timestamp: {result.first_timestamp}&quot;)
+</code></pre>
+<p><strong>Supported Log Types:</strong></p>
+<ul>
+<li><code>WIFI_LOG</code> - WiFi connection logs</li>
+<li><code>SYSTEM_LOG</code> - macOS system logs</li>
+<li><code>INSTALL_LOG</code> - Software installation logs</li>
+<li><code>SQLITE</code> - SQLite database files</li>
+<li><code>JSONLZ4</code> - Firefox JSONLZ4 compressed files</li>
+<li><code>JSON</code> - JSON files</li>
+<li><code>PLIST</code> - Property list files</li>
+<li><code>ASL</code> - Apple System Log files</li>
+</ul>
+<p><strong>Detection Methods:</strong></p>
+<ul>
+<li>Magic byte patterns (SQLite, JSONLZ4, etc.)</li>
+<li>Content pattern matching (timestamps, log prefixes)</li>
+<li>Structure analysis (JSON, plist format detection)</li>
+<li>Statistical heuristics for text logs</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li><code>LogType</code> enum</li>
+<li>Confidence score (0.0-1.0)</li>
+<li>Detection reasons (for debugging)</li>
+<li>First/last timestamps (if found)</li>
+</ul>
+<hr />
+<h2>How Fingerprinting Works</h2>
+<h3>Text Fingerprinting Process</h3>
+<ol>
+<li><strong>Quick Checks</strong> (fast rejection)</li>
+<li>File size &lt; 50 bytes → UNKNOWN</li>
+<li>
+<p>Binary magic bytes → classify as binary type</p>
+</li>
+<li>
+<p><strong>Magic Byte Detection</strong></p>
+</li>
+<li>JSONLZ4: <code>b"mozLz40\x00"</code></li>
+<li>
+<p>ASL: <code>b"ASL DB\x00"</code></p>
+</li>
+<li>
+<p><strong>Content Analysis</strong></p>
+</li>
+<li>Read first 1000-10000 lines</li>
+<li>Look for timestamp patterns</li>
+<li>Match against known log prefixes</li>
+<li>
+<p>Calculate pattern frequency</p>
+</li>
+<li>
+<p><strong>Scoring</strong></p>
+</li>
+<li>Each detection method adds to confidence</li>
+<li>Multiple matching patterns → higher confidence</li>
+<li>Return best match above threshold</li>
+</ol>
+<h2>Usage Examples</h2>
+<h3>Fingerprint Unknown Files</h3>
+<pre><code class="language-python">from pathlib import Path
+from mars.pipeline.fingerprinter.text_fingerprinter import identify_log_type
+
+file_path = Path(&quot;./unknown_file&quot;)
+
+# Try text fingerprinting
+result = identify_log_type(file_path, min_confidence=0.6)
+if result.log_type != LogType.UNKNOWN:
+    print(f&quot;Identified as: {result.log_type}&quot;)
+    print(f&quot;Confidence: {result.confidence:.2%}&quot;)
+</code></pre>
+<h2>Performance Notes</h2>
+<ul>
+<li><strong>Text fingerprinting</strong>: O(n) where n = number of lines sampled (max 10000)</li>
+<li><strong>Magic byte checks</strong>: O(1) - very fast, always run first</li>
+</ul>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

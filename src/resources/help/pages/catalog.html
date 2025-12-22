@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MARS Artifact Recovery Catalog (ARC) Manager - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#settings" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Artifact Recovery Catalog (ARC)</h1>
+<p>The Artifact Recovery Catalog defines the macOS artifacts that MARS collects during Exemplar scans.
+Each entry specifies where to find an artifact, how to process it, and how to handle archives.</p>
+<h2>Catalog File</h2>
+<p><strong>Location:</strong> <code>artifact_recovery_catalog.yaml</code></p>
+<p>The catalog uses YAML format with comment preservation for editability.</p>
+<h2>Structure</h2>
+<pre><code class="language-yaml">catalog_metadata:
+  version: 2.5.0
+  created: '2025-05-16'
+  updated: '2025-12-15'
+
+skip_databases:
+  geoservices:
+    name: GeoServices / Location Services Cache
+    reason: Read-only Apple system cache
+    table_patterns: [GeoPlaces, GeoLookup_*, ...]
+    description: Geographic lookup tables
+    notes: Contains no user activity
+
+category_name:
+  - name: Artifact Name
+    glob_pattern: 'path/to/artifact'
+    file_type: database
+    scope: user
+    # ... additional fields
+</code></pre>
+<h2>Sections</h2>
+<h3>catalog_metadata</h3>
+<p>Version tracking for the catalog file.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>version</code></td>
+<td>Semantic version string</td>
+</tr>
+<tr>
+<td><code>created</code></td>
+<td>Creation date</td>
+</tr>
+<tr>
+<td><code>updated</code></td>
+<td>Last modification date (auto-updated by editor)</td>
+</tr>
+</tbody>
+</table>
+<h3>skip_databases</h3>
+<p>Databases to exclude from processing. Used for system caches with no forensic value.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>Display name</td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td>Why it's skipped</td>
+</tr>
+<tr>
+<td><code>table_patterns</code></td>
+<td>Table name patterns to match</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>What the database contains</td>
+</tr>
+<tr>
+<td><code>notes</code></td>
+<td>Additional context</td>
+</tr>
+</tbody>
+</table>
+<h3>Category Groups</h3>
+<p>Artifacts are organized into category groups (e.g., <code>accounts</code>, <code>airdrop</code>, <code>biome</code>).
+Each group contains one or more artifact entries.</p>
+<h2>Entry Fields</h2>
+<h3>Required Fields</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>Display name (e.g., "Chrome History")</td>
+</tr>
+<tr>
+<td><code>glob_pattern</code></td>
+<td>string</td>
+<td>Path pattern to locate the artifact</td>
+</tr>
+<tr>
+<td><code>file_type</code></td>
+<td>enum</td>
+<td><code>database</code>, <code>log</code>, or <code>cache</code></td>
+</tr>
+<tr>
+<td><code>scope</code></td>
+<td>enum</td>
+<td><code>user</code> or <code>system</code></td>
+</tr>
+<tr>
+<td><code>exemplar_pattern</code></td>
+<td>string</td>
+<td>Output path pattern for exemplar files</td>
+</tr>
+</tbody>
+</table>
+<h3>Optional Fields</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>description</code></td>
+<td>string</td>
+<td>-</td>
+<td>Brief description</td>
+</tr>
+<tr>
+<td><code>notes</code></td>
+<td>string</td>
+<td>-</td>
+<td>Implementation notes</td>
+</tr>
+<tr>
+<td><code>ignorable_tables</code></td>
+<td>list</td>
+<td><code>[]</code></td>
+<td>Tables to skip (databases only)</td>
+</tr>
+<tr>
+<td><code>multi_profile</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Has browser-style profiles</td>
+</tr>
+<tr>
+<td><code>has_archives</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Has associated compressed files</td>
+</tr>
+<tr>
+<td><code>archives</code></td>
+<td>list</td>
+<td>-</td>
+<td>Archive configuration (see below)</td>
+</tr>
+<tr>
+<td><code>combine_strategy</code></td>
+<td>enum</td>
+<td>-</td>
+<td>How to combine archives</td>
+</tr>
+<tr>
+<td><code>preserve_structure</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Copy folder structure intact</td>
+</tr>
+</tbody>
+</table>
+<h2>Glob Pattern Syntax</h2>
+<p>Patterns follow Python's <code>pathlib.glob()</code> syntax:</p>
+<pre><code class="language-yaml"># User-scoped: use * for username
+glob_pattern: 'Users/*/Library/Application Support/com.apple.TCC/TCC.db'
+
+# Variable folder depth
+glob_pattern: 'Users/*/Library/Caches/**/Cache.db'
+
+# Variable filename
+glob_pattern: 'private/var/folders/*/*/0/com.apple.routined/dv/Cache/Cloud*.sqlite'
+
+# Multi-profile (browser)
+glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/History'
+
+# All files in directory
+glob_pattern: 'Users/*/Library/Caches/Firefox/Profiles/*/cache2/*'
+
+# Recursive with structure preservation
+glob_pattern: 'private/var/db/uuidtext/**/*'
+</code></pre>
+<p><strong>Scope Detection:</strong></p>
+<ul>
+<li>Paths starting with <code>Users/</code> are <code>user</code> scope</li>
+<li>All other paths are <code>system</code> scope</li>
+</ul>
+<h2>Archive Configuration</h2>
+<p>For artifacts with compressed archives (e.g., Powerlog .gz files):</p>
+<pre><code class="language-yaml">has_archives: true
+archives:
+  - name: Archives
+    subpath: ''              # Relative to artifact location (empty = same folder)
+    pattern: '*.gz'          # Archive file pattern
+    combine_strategy: decompress_and_merge
+</code></pre>
+<h3>Combine Strategies</h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>decompress_and_merge</code></td>
+<td>SQLite databases - merge rows</td>
+</tr>
+<tr>
+<td><code>decompress_and_concatenate</code></td>
+<td>Text logs - append content</td>
+</tr>
+<tr>
+<td><code>decompress_only</code></td>
+<td>Just decompress, don't combine</td>
+</tr>
+</tbody>
+</table>
+<h2>Multi-Profile Support</h2>
+<p>For browser-style artifacts with profile folders:</p>
+<pre><code class="language-yaml">name: Chrome History
+glob_pattern: 'Users/*/Library/Application Support/Google/Chrome/*/History'
+multi_profile: true
+</code></pre>
+<p>The final <code>*</code> before the filename is treated as the profile name (e.g., "Default", "Profile 1").</p>
+<h2>Module Files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>artifact_recovery_catalog.yaml</code></td>
+<td>The catalog data</td>
+</tr>
+<tr>
+<td><code>catalog_editor.py</code></td>
+<td>Programmatic editing with format preservation</td>
+</tr>
+<tr>
+<td><code>glob_validator.py</code></td>
+<td>Validate glob patterns</td>
+</tr>
+</tbody>
+</table>
+<h2>Usage</h2>
+<p>The catalog is loaded automatically during Exemplar scans. To edit:</p>
+<ol>
+<li>Use the ARC Manager in the MARS TUI (Settings &gt; ARC Manager)</li>
+<li>Or edit <code>artifact_recovery_catalog.yaml</code> directly</li>
+</ol>
+<p>The <code>CatalogEditor</code> class preserves YAML comments and formatting when making programmatic changes.</p>
+<h2>Adding New Artifacts</h2>
+<ol>
+<li>Choose the appropriate category group (or create a new one)</li>
+<li>Add entry with required fields: <code>name</code>, <code>glob_pattern</code>, <code>file_type</code>, <code>scope</code>, <code>exemplar_pattern</code></li>
+<li>Test the glob pattern matches files on a sample system</li>
+<li>Add optional fields as needed (archives, ignorable_tables, etc.)</li>
+</ol>
+<p>Example minimal entry:</p>
+<pre><code class="language-yaml">my_category:
+  - name: My Database
+    glob_pattern: 'Users/*/Library/My App/data.db'
+    file_type: database
+    scope: user
+    exemplar_pattern: databases/catalog/My Database*
+</code></pre>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

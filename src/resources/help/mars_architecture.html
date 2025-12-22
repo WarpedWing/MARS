@@ -1,0 +1,1498 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400..600&display=swap"
+      rel="stylesheet" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MARS Technical Architecture</title>
+    <link href="default.css" rel="stylesheet" type="text/css" />
+  </head>
+  <body data-theme="dark">
+    <div class="layout">
+      <nav>
+        <div class="logo">
+          <img src="../images/WarpedWingLabsLogo_Horizontal_W500.png" alt="WarpedWing Labs" />
+        </div>
+        <h3>Navigation</h3>
+        <ul>
+          <li><a href="mars_help.html">← User Guide</a></li>
+          <li><a href="#overview">System Overview</a></li>
+        </ul>
+        <h3>Core Concepts</h3>
+        <ul>
+          <li><a href="#exemplar">Exemplar Scanning</a></li>
+          <li><a href="#rubrics">Rubric System</a></li>
+          <li><a href="#pipeline">Pipeline Architecture</a></li>
+        </ul>
+        <h3>Processing Stages</h3>
+        <ul>
+          <li><a href="#variant-selection">Variant Selection</a></li>
+          <li><a href="#lf-reconstruction">LF Reconstruction</a></li>
+          <li><a href="#byte-carving">Byte Carving</a></li>
+        </ul>
+        <h3>Advanced Topics</h3>
+        <ul>
+          <li><a href="#dfvfs">dfVFS Integration</a></li>
+          <li><a href="#configuration">Configuration</a></li>
+        </ul>
+      </nav>
+
+      <main>
+        <header>
+          <h1>MARS Technical Architecture</h1>
+          <p class="subtitle">Deep dive into the forensic recovery pipeline</p>
+        </header>
+
+        <!-- SYSTEM OVERVIEW -->
+        <section id="overview">
+          <h2>System Overview</h2>
+          <p>
+            The MARS architecture follows a two-phase approach: first building a reference knowledge
+            base (exemplars), then using that knowledge to classify and recover data from damaged or
+            carved databases (candidates).
+          </p>
+
+          <h3>High-Level Architecture</h3>
+          <div class="flow-diagram">
+            <pre>
+┌─────────────────────────────────────────────────────────┐
+│                   EXEMPLAR PHASE                        │
+│  (Known-Good macOS System → Reference Knowledge Base)   │
+└─────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+         ┌──────────────────────────────────┐
+         │   Scan Live System / Image       │
+         │   Extract Database Schemas       │
+         └──────────────────────────────────┘
+                           │
+                           ▼
+         ┌──────────────────────────────────┐
+         │   Generate Rubrics (JSON)        │
+         │   Create Hash Lookup Table       │
+         └──────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                   CANDIDATE PHASE                       │
+│     (Carved Files → Classified & Recovered Data)        │
+└─────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+         ┌──────────────────────────────────┐
+         │   File Categorization            │
+         │   (raw_scanner/file_categorizer) │
+         └──────────────────────────────────┘
+                           │
+                           ▼
+         ┌──────────────────────────────────┐
+         │   Database Variant Selection     │
+         │   (O/C/R/D/X variant testing)    │
+         └──────────────────────────────────┘
+                           │
+                ┌──────────┴──────────┐
+                │                     │
+                ▼                     ▼
+    ┌──────────────────┐   ┌──────────────────┐
+    │  Variant X       │   │  Valid Variants  │
+    │  (Empty/Failed)  │   │  (O/C/R/D)       │
+    └──────────────────┘   └──────────────────┘
+                │                     │
+                ▼                     ▼
+    ┌──────────────────┐   ┌──────────────────┐
+    │  Byte Carving    │   │  LF Processor    │
+    │  (Extract raw)   │   │  (4 modes)       │
+    └──────────────────┘   └──────────────────┘
+                │                     │
+                └──────────┬──────────┘
+                           ▼
+         ┌──────────────────────────────────┐
+         │   Final Output Organization      │
+         │   (catalog/, metamatches/, etc.) │
+         └──────────────────────────────────┘
+</pre
+            >
+          </div>
+
+          <h3>Data Flow: Exemplar → Candidate</h3>
+          <p>The system operates in two phases:</p>
+
+          <div class="card">
+            <div class="card-title">Phase 1: Exemplar Scanning</div>
+            <p>
+              Scans a known-good macOS system to extract database schemas and create matching
+              rubrics. This builds the "source of truth" for identifying carved databases.
+            </p>
+            <ul>
+              <li><strong>Input:</strong> Live macOS system, disk image, or directory</li>
+              <li><strong>Output:</strong> Database schemas, JSON rubrics, hash lookup table</li>
+              <li>
+                <strong>Key Artifact:</strong>
+                <code>exemplar_hash_lookup.json</code> enables O(1) matching
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Phase 2: Candidate Processing</div>
+            <p>
+              Processes carved/recovered files and matches them against exemplar schemas. Recovers
+              data from damaged databases using multiple strategies.
+            </p>
+            <ul>
+              <li><strong>Input:</strong> Carved files from PhotoRec, Scalpel, etc.</li>
+              <li>
+                <strong>Output:</strong> Classified databases, reconstructed tables, carved data
+              </li>
+            </ul>
+          </div>
+
+          <h3>Key Terminology</h3>
+          <table>
+            <tr>
+              <th>Term</th>
+              <th>Definition</th>
+            </tr>
+            <tr>
+              <td><strong>Exemplar</strong></td>
+              <td>Reference database from known-good system; provides schema baseline</td>
+            </tr>
+            <tr>
+              <td><strong>Candidate</strong></td>
+              <td>Carved/recovered database being analyzed against exemplars</td>
+            </tr>
+            <tr>
+              <td><strong>Rubric</strong></td>
+              <td>JSON schema definition with table structures, column roles, and statistics</td>
+            </tr>
+            <tr>
+              <td><strong>Variant</strong></td>
+              <td>Recovery method: O=Original, C=Clone, R=Recover, D=Dissect, X=Failed</td>
+            </tr>
+            <tr>
+              <td><strong>Lost & Found</strong></td>
+              <td>SQLite's recovery mechanism for orphaned database pages</td>
+            </tr>
+            <tr>
+              <td><strong>Catalog</strong></td>
+              <td>
+                Exact schema matches - recovered databases that perfectly match exemplar schemas
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Metamatch</strong></td>
+              <td>
+                Non-catalog matches with intact data; identical schemas are combined and
+                deduplicated
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Found Data</strong></td>
+              <td>ORPHAN: Unmatched L&F fragments preserved for manual review</td>
+            </tr>
+          </table>
+
+          <div class="tip">
+            <div class="tip-title">Design Philosophy</div>
+            MARS prioritizes traceability. Every output file includes original filenames and data
+            source provenance tracking, ensuring all recovered data can be traced back to its
+            origins.
+          </div>
+        </section>
+
+        <!-- EXEMPLAR SCANNING -->
+        <section id="exemplar">
+          <h2>Exemplar Scanning</h2>
+          <p>
+            Exemplar scanning builds the reference knowledge base that powers the entire recovery
+            pipeline. By analyzing known-good databases from a live macOS system, MARS creates
+            detailed schema fingerprints that enable accurate classification and reconstruction of
+            carved data.
+          </p>
+
+          <h3>What Gets Extracted</h3>
+          <p>The exemplar scanner performs comprehensive analysis of each database:</p>
+
+          <ul>
+            <li><strong>Schema Structure:</strong> Full table and column definitions</li>
+            <li>
+              <strong>Column Roles:</strong> Semantic classification (timestamp, UUID, URL, email,
+              etc.)
+            </li>
+            <li><strong>String Statistics:</strong> Average string lengths for disambiguation</li>
+            <li><strong>Example Values:</strong> Sample data for pattern matching</li>
+            <li><strong>Row Counts:</strong> Expected data volumes per table</li>
+          </ul>
+
+          <h3>Rubric Generation Process</h3>
+          <div class="workflow">
+            <div class="workflow-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>File Discovery</h4>
+                <p>
+                  Scan source using dfVFS, matching patterns from
+                  <code>artifact_recovery_catalog.yaml</code>.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Schema Extraction</h4>
+                <p>
+                  For each SQLite database, extract complete schema using
+                  <code>sqlite_master</code> queries. Identify primary keys, foreign keys, and
+                  indexes.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Semantic Analysis</h4>
+                <p>
+                  Analyze column data to assign semantic roles (timestamp, UUID, URL, email, path).
+                  Extract example values and calculate string statistics.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Rubric Generation</h4>
+                <p>
+                  Combine schema + semantics into JSON rubric format. Save to
+                  <code>databases/schemas/{db_name}.rubric.json</code>
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">5</div>
+              <div class="step-content">
+                <h4>Hash Lookup Creation</h4>
+                <p>
+                  Compute MD5 hash of schema signature (tables + columns). Store in
+                  <code>exemplar_hash_lookup.json</code> for O(1) matching.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <h3>Hash-Based Fast Matching</h3>
+          <p>
+            The hash lookup table enables rapid O(1) exemplar identification without loading full
+            rubrics or iterating through databases:
+          </p>
+
+          <div class="card">
+            <div class="card-title">Schema Hash Format</div>
+            <pre><code>MD5(table1|col1,col2,col3|table2|col4,col5)</code></pre>
+            <p style="margin-top: 0.5rem">
+              Each table is represented by name + sorted column names, separated by pipes. This
+              creates a unique fingerprint for each schema variant.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Lookup Table Structure</div>
+            <pre><code>{
+  "a1b2c3d4": "Safari_History",
+  "e5f6g7h8": "Chrome_Cookies",
+  "i9j0k1l2": "Messages_chat"
+}</code></pre>
+            <p style="margin-top: 0.5rem">
+              Schema hashes include both table names AND column names, making false positives
+              virtually impossible. Only databases with identical structures will match.
+            </p>
+          </div>
+        </section>
+
+        <!-- RUBRIC SYSTEM -->
+        <section id="rubrics">
+          <h2>Rubric System</h2>
+          <p>
+            Rubrics are the intelligence layer that enables MARS to match fragmented data back to
+            its original table structure.
+          </p>
+
+          <h3>Rubric Anatomy</h3>
+          <p>A complete rubric contains three layers of information:</p>
+
+          <div class="card">
+            <div class="card-title">1. Structural Layer</div>
+            <ul>
+              <li>Table names and column definitions</li>
+              <li>Data types (INTEGER, TEXT, REAL, BLOB)</li>
+              <li>Primary key and foreign key relationships</li>
+              <li>Index definitions</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">2. Semantic Layer</div>
+            <ul>
+              <li>Column roles: timestamp, UUID, URL, email, path, domain</li>
+              <li>Pattern detection: timestamp formats, ID patterns</li>
+              <li>Semantic anchors: weighted confidence scores</li>
+              <li>Example values for pattern matching</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">3. Statistical Layer</div>
+            <ul>
+              <li>Average string lengths per column (avg_length)</li>
+              <li>Row counts and data volumes</li>
+              <li>Value distributions and frequency patterns</li>
+              <li>Most common values for disambiguation</li>
+            </ul>
+          </div>
+
+          <h3>Column Roles & Semantic Anchors</h3>
+          <p>
+            Semantic anchors are weighted scores that boost confidence when specific patterns are
+            detected. They help create a strong "fingerprint" and disambiguate between similar
+            schemas:
+          </p>
+
+          <table>
+            <tr>
+              <th>Role</th>
+              <th>Weight</th>
+              <th>Detection Method</th>
+            </tr>
+            <tr>
+              <td><code>timestamp</code></td>
+              <td>0.9</td>
+              <td>Unix epoch, Cocoa timestamp, ISO 8601 formats</td>
+            </tr>
+            <tr>
+              <td><code>uuid</code></td>
+              <td>1.0</td>
+              <td>8-4-4-4-12 hexadecimal pattern</td>
+            </tr>
+            <tr>
+              <td><code>url</code></td>
+              <td>0.8</td>
+              <td>HTTP/HTTPS scheme detection</td>
+            </tr>
+            <tr>
+              <td><code>email</code></td>
+              <td>0.7</td>
+              <td>name@domain.tld pattern</td>
+            </tr>
+            <tr>
+              <td><code>domain</code></td>
+              <td>0.6</td>
+              <td>Hostname pattern without scheme</td>
+            </tr>
+            <tr>
+              <td><code>path</code></td>
+              <td>0.5</td>
+              <td>Filesystem path patterns</td>
+            </tr>
+          </table>
+
+          <h3>String Statistics for Disambiguation</h3>
+          <p>
+            Average string lengths (<code>avg_length</code>) help distinguish between similar tables
+            with different purposes:
+          </p>
+
+          <div class="card">
+            <div class="card-title">Example: URL vs. Title Columns</div>
+            <table style="margin-top: 0.5rem">
+              <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th>Avg Length</th>
+              </tr>
+              <tr>
+                <td>url</td>
+                <td>TEXT</td>
+                <td>87</td>
+              </tr>
+              <tr>
+                <td>title</td>
+                <td>TEXT</td>
+                <td>32</td>
+              </tr>
+            </table>
+            <p style="margin-top: 0.5rem">
+              Both are TEXT columns, but length statistics reveal their different purposes and
+              improve matching accuracy.
+            </p>
+          </div>
+
+          <h3>Rubric Matching Algorithm</h3>
+          <p>
+            When matching <code>lost_and_found</code> fragments to rubrics, MARS uses a multi-factor
+            confidence scoring system:
+          </p>
+
+          <ol>
+            <li>
+              <strong>Column Matching:</strong> Compare column names and types between fragment and
+              rubric
+            </li>
+            <li>
+              <strong>Chunk Analysis:</strong> Identify longest matching column sequences (chunks)
+            </li>
+            <li><strong>Semantic Boost:</strong> Add weights for detected semantic anchors</li>
+            <li><strong>String Validation:</strong> Compare avg_length statistics</li>
+            <li>
+              <strong>Threshold Filtering:</strong> Reject matches below minimum confidence (default
+              0.7)
+            </li>
+          </ol>
+        </section>
+
+        <!-- PIPELINE ARCHITECTURE -->
+        <section id="pipeline">
+          <h2>Candidate Scan Pipeline</h2>
+          <p>
+            The candidate pipeline processes carved files through multiple specialized stages, each
+            handling a specific aspect of recovery and classification.
+          </p>
+
+          <h3>Pipeline Stages</h3>
+          <div class="flow-diagram">
+            <pre>
+1. raw_scanner/         File Discovery & Categorization
+   file_categorizer     ├─ Identify file types via fingerprinting
+                        ├─ Skip media/executables
+                        └─ Organize by artifact type
+
+                              │
+                              ▼
+
+2. fingerprinter/       Type-Specific Identification
+                        ├─ SQLite: Magic bytes + schema extraction
+                        ├─ Text logs: Pattern-based classification
+                        └─ Archives: Compression format detection
+
+                              │
+                              ▼
+
+3. matcher/             Schema Matching & Classification
+   rubric_matcher       ├─ Hash-based O(1) exemplar lookup
+                        ├─ Rubric confidence scoring
+                        └─ Group unmatched by schema similarity
+
+                              │
+                              ▼
+
+4. db_variant_selector/ Recovery Variant Testing
+                        ├─ O (Original): Test as-is
+                        ├─ C (Clone): Clean copy via VACUUM
+                        ├─ R (Recover): SQLite .recover output
+                        ├─ D (Dissect): sqlite_dissect rebuild
+                        └─ X (Failed): Send to byte carving
+
+                              │
+                ┌─────────────┴─────────────┐
+                │                           │
+                ▼                           ▼
+
+5a. carver/           5b. lf_processor/
+    Byte-Level Carving      Fragment Reconstruction
+    ├─ Extract timestamps   ├─ MERGE: Metamatch groups
+    ├─ Parse protobuf       ├─ CATALOG: Exact matches
+    ├─ Analyze URLs         ├─ NEAREST: Best-fit exemplar
+    └─ Output JSONL/CSV     └─ ORPHAN: Unmatched
+
+                              │
+                              ▼
+
+6. output/              Final Organization
+   structure            ├─ catalog/ (exact matches)
+                        ├─ metamatches/ (identical schemas, no exemplar)
+                        ├─ found_data/ (L&F orphans)
+                        └─ carved/ (byte-carved)
+</pre
+            >
+          </div>
+
+          <h3>Stage 1: File Categorization</h3>
+          <p>
+            The file categorizer scans input directories and identifies file types using magic bytes
+            and content analysis:
+          </p>
+
+          <ul>
+            <li>
+              <strong>SQLite databases:</strong> Identified by
+              <code>SQLite format 3\x00</code> magic bytes
+            </li>
+            <li>
+              <strong>Text logs:</strong> WiFi logs, system logs, install logs via pattern matching
+            </li>
+            <li><strong>Archives:</strong> gzip, bzip2 (decompressed and re-scanned)</li>
+            <li><strong>Ignored:</strong> Images, videos, executables (defined in config)</li>
+          </ul>
+
+          <h3>Stage 2: Fingerprinting</h3>
+          <p>The fingerprinter performs deep type analysis beyond simple magic bytes:</p>
+
+          <div class="card">
+            <div class="card-title">SQLite Fingerprinting</div>
+            <ul>
+              <li>Extract full schema via sqlite_master queries</li>
+              <li>Compute schema hash (MD5 of table+column structure)</li>
+              <li>Count rows per table</li>
+              <li>Detect lost_and_found tables from recovery</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Text Log Fingerprinting</div>
+            <ul>
+              <li>Sample first 1000-10000 lines</li>
+              <li>Detect timestamp patterns (multiple formats)</li>
+              <li>Match against known log prefixes</li>
+              <li>Calculate pattern frequency for confidence scoring</li>
+            </ul>
+          </div>
+
+          <h3>Stage 3: Schema Matching</h3>
+          <p>The matcher uses the exemplar hash lookup table for instant classification:</p>
+
+          <ol>
+            <li>Compute schema hash of candidate database</li>
+            <li>O(1) lookup in exemplar_hash_lookup.json</li>
+            <li>On match: Load full rubric for detailed validation</li>
+            <li>On miss: Group with other unmatched databases by schema hash</li>
+          </ol>
+
+          <div class="tip">
+            <div class="tip-title">Fallback Matching</div>
+            If hash lookup fails, MARS falls back to full rubric comparison using fuzzy matching
+            with configurable tolerance (default 0.8 table overlap).
+          </div>
+
+          <h3>Stage 4: Database Variant Selection</h3>
+          <p>See detailed section below on variant selection system.</p>
+
+          <h3>Stage 5: Lost & Found Reconstruction</h3>
+          <p>See detailed section below on LF processing (MERGE/CATALOG/NEAREST/ORPHAN).</p>
+
+          <h3>Stage 6: Output Organization</h3>
+          <p>Final databases are organized by match quality and processing path:</p>
+
+          <table>
+            <tr>
+              <th>Directory</th>
+              <th>Content</th>
+              <th>Quality</th>
+            </tr>
+            <tr>
+              <td><code>catalog/</code></td>
+              <td>CATALOG exact matches + promoted NEAREST (successful L&F recovery)</td>
+              <td>Highest confidence</td>
+            </tr>
+            <tr>
+              <td><code>metamatches/</code></td>
+              <td>MERGE combined identical schemas (no exemplar match)</td>
+              <td>High confidence</td>
+            </tr>
+            <tr>
+              <td><code>found_data/</code></td>
+              <td>ORPHAN: Unmatched L&F fragments</td>
+              <td>Low confidence - requires review</td>
+            </tr>
+            <tr>
+              <td><code>empty/</code></td>
+              <td>Catalog match with no usable data</td>
+              <td>May contain <code>rejected/</code> data for manual review</td>
+            </tr>
+            <tr>
+              <td><code>carved/</code></td>
+              <td>Byte-carved residue (variant X)</td>
+              <td>Requires manual review</td>
+            </tr>
+          </table>
+        </section>
+
+        <!-- VARIANT SELECTION -->
+        <section id="variant-selection">
+          <h2>Database Variant Selection System</h2>
+          <p>
+            When a carved SQLite database is encountered, it may be corrupted, incomplete, or
+            structurally damaged. The variant selector attempts multiple recovery strategies and
+            chooses the best result.
+          </p>
+
+          <h3>The O/C/R/D/X Variant Approach</h3>
+          <p>Each candidate database is processed through up to five different recovery methods:</p>
+
+          <table>
+            <tr>
+              <th>Variant</th>
+              <th>Method</th>
+              <th>When to Use</th>
+            </tr>
+            <tr>
+              <td><strong>O</strong></td>
+              <td>Original</td>
+              <td>Test raw carved file as-is. Often works for cleanly-carved databases.</td>
+            </tr>
+            <tr>
+              <td><strong>C</strong></td>
+              <td>Clone</td>
+              <td>Copy database to clean state using VACUUM INTO. Removes freelist corruption.</td>
+            </tr>
+            <tr>
+              <td><strong>R</strong></td>
+              <td>Recover</td>
+              <td>
+                Run <code>sqlite3 .recover</code> command. Creates lost_and_found tables for
+                orphaned pages.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>D</strong></td>
+              <td>Dissect</td>
+              <td>Use sqlite_dissect to rebuild from raw pages. Only when exemplar match found.</td>
+            </tr>
+            <tr>
+              <td><strong>X</strong></td>
+              <td>Failed</td>
+              <td>All variants failed validation. Send to byte carving pipeline.</td>
+            </tr>
+          </table>
+
+          <h3>Variant Selection Logic</h3>
+          <div class="workflow">
+            <div class="workflow-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Discovery & Introspection</h4>
+                <p>
+                  Attempt O, C, R (and D if exemplar matched). Collect metadata: table sets, row
+                  counts, integrity check results.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Hash-Based Matching</h4>
+                <p>
+                  Compute schema hash for each variant. O(1) lookup against
+                  exemplar_hash_lookup.json. Skip non-matching variants.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Profiling & Weighting</h4>
+                <p>
+                  For matched variants, sample up to <code>PROFILE_TABLE_SAMPLE_LIMIT</code> tables.
+                  Generate per-table row counts and completeness scores.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Best Variant Selection</h4>
+                <p>
+                  Combine profile score with base heuristic (integrity + row count). Choose
+                  highest-scoring variant. Mark others for cleanup.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <h3>Variant Scoring Heuristics</h3>
+          <p>Each variant is scored based on multiple factors:</p>
+
+          <ul>
+            <li><strong>Integrity:</strong> PRAGMA integrity_check result (pass = higher score)</li>
+            <li><strong>Row Count:</strong> Total rows across all tables (more = better)</li>
+            <li><strong>Table Completeness:</strong> Percentage of expected tables present</li>
+            <li><strong>Match Quality:</strong> Exact hash match vs. fuzzy table match</li>
+            <li>
+              <strong>lost_and_found Presence:</strong> R variant bonus for LF reconstruction
+              potential
+            </li>
+          </ul>
+
+          <div class="card">
+            <div class="card-title">Variant Decision Record (sqlite_scan_results.jsonl)</div>
+            <p>
+              Each database gets a decision record documenting the chosen variant and rationale:
+            </p>
+            <pre><code>{
+  "case_name": "f12345678",
+  "chosen_variant": "R",
+  "match_type": "hash",
+  "exemplar_name": "Safari_History",
+  "profile_score": 0.95,
+  "variants": {
+    "O": {"valid": true, "rows": 150, "integrity": "ok"},
+    "C": {"valid": true, "rows": 150, "integrity": "ok"},
+    "R": {"valid": true, "rows": 168, "has_lf": true},
+    "D": {"valid": false}
+  }
+}</code></pre>
+          </div>
+
+          <h3>Residue Processing</h3>
+          <p>After variant selection, the residue processor performs cleanup and extraction:</p>
+
+          <ol>
+            <li>
+              <strong>Lost-and-Found Extraction:</strong> Extract
+              <code>lost_and_found_*</code> tables from chosen variant into separate databases
+            </li>
+            <li><strong>Storage Cleanup:</strong> Delete non-chosen variants to save disk space</li>
+          </ol>
+        </section>
+
+        <!-- LF RECONSTRUCTION -->
+        <section id="lf-reconstruction">
+          <h2>Lost & Found (LF) Reconstruction</h2>
+          <p>
+            When SQLite's <code>.recover</code> command succeeds, it creates
+            <code>lost_and_found</code> tables containing orphaned database pages. The LF processor
+            matches these fragments against exemplar rubrics and reconstructs coherent databases.
+          </p>
+
+          <h3>The Four Processing Modes</h3>
+          <p>LF reconstruction follows a prioritized processing order based on match quality:</p>
+
+          <table>
+            <tr>
+              <th>Mode</th>
+              <th>Description</th>
+              <th>Match Type</th>
+              <th>Output</th>
+            </tr>
+            <tr>
+              <td><strong>MERGE</strong></td>
+              <td>Metamatch groups</td>
+              <td>Identical schemas, no exemplar match</td>
+              <td><code>metamatches/</code></td>
+            </tr>
+            <tr>
+              <td><strong>CATALOG</strong></td>
+              <td>Exact matches</td>
+              <td>Exact schema match to exemplar</td>
+              <td><code>catalog/</code></td>
+            </tr>
+            <tr>
+              <td><strong>NEAREST</strong></td>
+              <td>Best-fit exemplar</td>
+              <td>
+                Databases matched to nearest (not exact) exemplar. Rebuilds using exemplar schema as
+                template. Successful recoveries moved to <code>catalog/</code>.
+              </td>
+              <td><code>catalog/</code> or <code>empty/</code></td>
+            </tr>
+            <tr>
+              <td><strong>ORPHAN</strong></td>
+              <td>Unmatched tables</td>
+              <td>No match found. Adds match hints to remnant LF tables if possible.</td>
+              <td><code>found_data/</code></td>
+            </tr>
+          </table>
+
+          <h3>Processing Order & Rationale</h3>
+          <div class="workflow">
+            <div class="workflow-step">
+              <div class="step-number">0</div>
+              <div class="step-content">
+                <h4>Phase 1: Split Databases</h4>
+                <p>
+                  Extract lost_and_found tables from all recovered databases into separate "split"
+                  databases for matching.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Phase 2: MERGE (First)</h4>
+                <p>
+                  Group databases with identical schemas (tables + columns) that don't match any
+                  exemplar. Combine into superrubrics for later matching.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Phase 3: CATALOG (Second)</h4>
+                <p>
+                  Process exact matches using canonical exemplar rubrics. Highest-quality
+                  reconstruction with known-good schemas.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Phase 4: NEAREST (Third)</h4>
+                <p>
+                  For databases that don't fit MERGE or CATALOG, match to the nearest exemplar based
+                  on schema similarity. Rebuild using the exemplar schema as template. Results
+                  initially go to <code>found_data/</code>, then Phase 7 reclassifies.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Phase 5: ORPHAN</h4>
+                <p>
+                  Collect all unmatched fragments from MERGE/CATALOG/NEAREST. Preserve for manual
+                  forensic review. Must run after matching phases to capture remnants.
+                </p>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <div class="step-number">5</div>
+              <div class="step-content">
+                <h4>Phase 7: Reclassification (Final)</h4>
+                <p>
+                  Reclassify NEAREST results based on recovery success: successful L&F recovery
+                  (<code>total_lf_rows > 0</code>) promotes to <code>catalog/</code>; no recovery
+                  moves to <code>empty/</code>. Also cleans up empty CATALOG entries.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <h3>MERGE: Metamatch Groups (Identical Schemas)</h3>
+          <p>
+            When multiple databases share identical schemas (same tables AND columns) but don't
+            match any known exemplar, they're grouped by schema hash and processed together:
+          </p>
+
+          <ol>
+            <li>
+              <strong>Grouping:</strong> Databases classified by schema hash (tables + columns)
+            </li>
+            <li><strong>Combining:</strong> Merge all group members into single database</li>
+            <li><strong>Superrubric Generation:</strong> Create schema rubric from merged data</li>
+            <li>
+              <strong>Fragment Matching:</strong> Match lost_and_found tables against superrubric
+            </li>
+            <li>
+              <strong>Reconstruction:</strong> Rebuild combined database with intact + recovered
+              data
+            </li>
+          </ol>
+
+          <div class="card">
+            <div class="card-title">Example: Unknown App Database Metamatch Group</div>
+            <p>Three carved databases with identical schema (no exemplar match):</p>
+            <ul>
+              <li><strong>f12345678:</strong> Unknown app database from disk offset 0x00BC</li>
+              <li><strong>f23456789:</strong> Same schema found at disk offset 0x1A00</li>
+              <li><strong>f34567890:</strong> Same schema found at disk offset 0x2F00</li>
+            </ul>
+            <p style="margin-top: 0.5rem">
+              <strong>Result:</strong> Combined into single <code>unknown_app_a1b2c3d4</code>
+              database with data from all three sources. The filename is based off the first table
+              name.
+            </p>
+          </div>
+
+          <h3>CATALOG: Exact Matches</h3>
+          <p>Exact schema matches use the canonical exemplar rubric for reconstruction:</p>
+
+          <ol>
+            <li><strong>Hash Match:</strong> Schema hash exactly matches exemplar</li>
+            <li><strong>Rubric Loading:</strong> Load canonical exemplar rubric</li>
+            <li>
+              <strong>Fragment Matching:</strong> Match lost_and_found columns to rubric tables
+            </li>
+            <li><strong>Reconstruction:</strong> Rebuild using exemplar schema as template</li>
+            <li>
+              <strong>Remnant Handling:</strong> Unmatched fragments saved to
+              <code>lost_and_found/</code>
+            </li>
+          </ol>
+
+          <h3>NEAREST: Best-Fit Exemplar Matching</h3>
+          <p>
+            When a database doesn't exactly match any exemplar but is close enough for useful
+            reconstruction, NEAREST matches it to the nearest exemplar schema based on similarity:
+          </p>
+
+          <ol>
+            <li>
+              <strong>Schema Comparison:</strong> Find the nearest matching exemplar based on table
+              and column similarity
+            </li>
+            <li>
+              <strong>Fragment Matching:</strong> Match lost_and_found fragments against the nearest
+              exemplar rubric
+            </li>
+            <li>
+              <strong>Schema Rebuild:</strong> Reconstruct database using the nearest exemplar
+              schema as template (structurally compatible with CATALOG results)
+            </li>
+            <li>
+              <strong>Initial Output:</strong> Results go to <code>found_data/</code> initially
+            </li>
+            <li>
+              <strong>Phase 7 Reclassification:</strong> Successful recovery (L&F rows > 0) promotes
+              to <code>catalog/</code>; no recovery moves to <code>empty/</code>
+            </li>
+          </ol>
+
+          <div class="tip">
+            <div class="tip-title">Why Reclassification?</div>
+            Since NEAREST rebuilds databases using the exemplar schema as template, successful
+            recoveries are structurally compatible with CATALOG results and can be merged with
+            existing CATALOG entries for the same exemplar.
+          </div>
+
+          <h3>ORPHAN: Unmatched Fragments</h3>
+          <p>Fragments that don't match any schema are preserved for manual review:</p>
+
+          <ul>
+            <li>
+              <strong>Collection:</strong> Gather all remnants from MERGE/CATALOG/NEAREST processing
+            </li>
+            <li>
+              <strong>Preservation:</strong> Create standalone databases with original fragment
+              structure
+            </li>
+            <li><strong>Naming:</strong> Include match hints when partial matches existed</li>
+            <li><strong>Traceability:</strong> Filenames preserved for forensic correlation</li>
+          </ul>
+
+          <div class="card">
+            <div class="card-title">Output Example: Safari_History_f12345678_orphans.sqlite</div>
+            <ul>
+              <li><strong>Safari_History:</strong> Match hint (what we think it is)</li>
+              <li><strong>f12345678:</strong> Original file offset (where found)</li>
+              <li><strong>orphans:</strong> Contains unmatched lost_and_found fragments</li>
+            </ul>
+          </div>
+
+          <h3>Data Source Tracking</h3>
+          <p>All reconstructed tables include a <code>data_source</code> column for provenance:</p>
+
+          <table>
+            <tr>
+              <th>Value</th>
+              <th>Meaning</th>
+            </tr>
+            <tr>
+              <td><code>carved_{db_name}</code></td>
+              <td>Intact data from original database structure</td>
+            </tr>
+            <tr>
+              <td><code>found_{db_name}</code></td>
+              <td>Reconstructed data from lost_and_found fragments</td>
+            </tr>
+          </table>
+
+          <h3>Manifest Files</h3>
+          <p>
+            Each reconstructed database includes a
+            <code>*_manifest.json</code> documenting:
+          </p>
+
+          <ul>
+            <li>Source databases that contributed data</li>
+            <li>Intact rows vs. LF-recovered rows per source</li>
+            <li>Remnant tables (unmatched fragments)</li>
+            <li>Duplicates removed during deduplication</li>
+            <li>Table-level statistics (row counts per table)</li>
+          </ul>
+
+          <div class="tip">
+            <div class="tip-title">Forensic Traceability</div>
+            Every output filename includes the original filename, allowing investigators to trace
+            recovered data back to its origins. The data_source column provides row-level provenance
+            tracking.
+          </div>
+        </section>
+
+        <!-- BYTE CARVING -->
+        <section id="byte-carving">
+          <h2>Byte-Carving Pipeline</h2>
+          <p>
+            When all variant recovery methods fail (variant X), MARS falls back to byte-level
+            carving. This extracts raw data directly from database pages without relying on SQLite's
+            structural integrity.
+          </p>
+
+          <h3>Carving Strategy</h3>
+          <p>The byte carver processes databases page-by-page, extracting forensic artifacts:</p>
+
+          <div class="card">
+            <div class="card-title">1. Timestamp Detection</div>
+            <p>Identifies multiple timestamp formats:</p>
+            <ul>
+              <li><strong>Unix epoch:</strong> Seconds, milliseconds, nanoseconds since 1970</li>
+              <li><strong>Cocoa/Core Data:</strong> Seconds since 2001-01-01 (macOS/iOS)</li>
+              <li><strong>Chrome:</strong> Microseconds since 1601-01-01</li>
+              <li><strong>WebKit:</strong> Seconds since 2001-01-01</li>
+              <li><strong>Windows FILETIME:</strong> 100ns ticks since 1601</li>
+              <li><strong>ISO 8601:</strong> Text timestamps (2025-01-18T10:30:00Z)</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">2. URL Extraction & Analysis</div>
+            <p>
+              Uses regex patterns to find URLs, then analyzes with
+              <strong>Unfurl</strong>:
+            </p>
+            <ul>
+              <li>Parse query parameters and fragments</li>
+              <li>Extract embedded timestamps from URL structure</li>
+              <li>Detect UUIDs and session IDs in paths</li>
+              <li>Identify platform (Facebook, YouTube, Twitter, etc.)</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">3. Protobuf Decoding</div>
+            <p>Uses <strong>blackboxprotobuf</strong> for schema-agnostic decoding:</p>
+            <ul>
+              <li>Detect protobuf magic patterns in BLOB fields</li>
+              <li>Decode without schema using type inference</li>
+              <li>Extract nested timestamps and strings</li>
+              <li>Generate JSON representation with inferred typedef</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">4. Text Extraction</div>
+            <ul>
+              <li>Extract printable ASCII strings (minimum length filtering)</li>
+              <li>Preserve context (surrounding bytes for analysis)</li>
+              <li>Deduplicate close timestamps to reduce noise</li>
+            </ul>
+          </div>
+
+          <h3>Carving Process Flow</h3>
+          <div class="flow-diagram">
+            <pre>
+Database File (Variant X)
+        │
+        ▼
+┌───────────────────┐
+│ Read Page-by-Page │ (4096-byte SQLite pages)
+└───────────────────┘
+        │
+        ├─── Scan for numeric values ───→ Timestamp Classifier
+        │                                  ├─ Unix epoch?
+        │                                  ├─ Cocoa timestamp?
+        │                                  ├─ Chrome time?
+        │                                  └─ Valid range filter
+        │
+        ├─── Regex match URLs ──────────→ Unfurl Analyzer
+        │                                  ├─ Parse structure
+        │                                  ├─ Extract query params
+        │                                  └─ Detect embedded timestamps
+        │
+        ├─── Scan for BLOB data ────────→ Protobuf Decoder
+        │                                  ├─ blackboxprotobuf decode
+        │                                  ├─ Extract nested data
+        │                                  └─ Convert to JSON
+        │
+        └─── Extract text strings ──────→ Text Scanner
+                                           ├─ Printable ASCII filter
+                                           └─ Context preservation
+        │
+        ▼
+┌──────────────────────────────────┐
+│ Output Generation                │
+│ ├─ timestamps.csv (optional)     │
+│ ├─ carved.jsonl (detailed)       │
+│ └─ carved.db (structured SQLite) │
+└──────────────────────────────────┘
+</pre
+            >
+          </div>
+
+          <h3>Integration with Unfurl</h3>
+          <p>
+            Unfurl provides context-aware URL analysis that helps distinguish real timestamps from
+            ID values:
+          </p>
+
+          <div class="card">
+            <div class="card-title">Example: Facebook URL Analysis</div>
+            <pre><code>https://facebook.com/photo.php?fbid=123456789&id=987654321</code></pre>
+            <p style="margin-top: 0.5rem">Unfurl extracts:</p>
+            <ul>
+              <li><strong>Platform:</strong> facebook</li>
+              <li>
+                <strong>Photo ID:</strong> 123456789 (NOT a timestamp, despite numeric format)
+              </li>
+              <li><strong>User ID:</strong> 987654321 (confirmed ID, not time)</li>
+            </ul>
+            <p style="margin-top: 0.5rem">
+              This context prevents false positive timestamp classifications.
+            </p>
+          </div>
+
+          <h3>Integration with blackboxprotobuf</h3>
+          <p>
+            Schema-agnostic protobuf decoding recovers structured data without requiring .proto
+            definitions:
+          </p>
+
+          <div class="card">
+            <div class="card-title">Protobuf Decoding Example</div>
+            <pre><code>Input: Binary BLOB (unknown structure)
+
+blackboxprotobuf output:
+{
+  "message": {
+    "1": "user@example.com",
+    "2": 1705584600,
+    "3": {
+      "1": "https://example.com/path",
+      "2": 42
+    }
+  },
+  "typedef": {
+    "1": {"type": "string"},
+    "2": {"type": "int"},
+    "3": {"type": "message", ...}
+  }
+}</code></pre>
+            <p style="margin-top: 0.5rem">
+              Field "2" is identified as an integer and classified as a timestamp candidate by the
+              timestamp detector.
+            </p>
+          </div>
+
+          <h3>Carving Output Formats</h3>
+          <table>
+            <tr>
+              <th>Format</th>
+              <th>Use Case</th>
+              <th>Content</th>
+            </tr>
+            <tr>
+              <td><code>timestamps.csv</code></td>
+              <td>Timeline analysis</td>
+              <td>All detected timestamps with format, confidence, and offset</td>
+            </tr>
+            <tr>
+              <td><code>carved.jsonl</code></td>
+              <td>Detailed review</td>
+              <td>Page-by-page extraction with URLs, protobuf, text, and context</td>
+            </tr>
+            <tr>
+              <td><code>carved.db</code></td>
+              <td>Structured analysis</td>
+              <td>SQLite database with tables for timestamps, URLs, and extracted data</td>
+            </tr>
+          </table>
+        </section>
+
+        <!-- DFVFS INTEGRATION -->
+        <section id="dfvfs">
+          <h2>dfVFS Integration</h2>
+          <p>
+            MARS uses Digital Forensics Virtual File System (dfVFS) for universal disk image access.
+            This provides consistent file access across all forensic image formats and archive
+            types.
+          </p>
+
+          <h3>Supported Formats</h3>
+          <table>
+            <tr>
+              <th>Category</th>
+              <th>Formats</th>
+            </tr>
+            <tr>
+              <td><strong>Disk Images</strong></td>
+              <td>E01, Ex01, DD, DMG, VMDK, VHD</td>
+            </tr>
+            <tr>
+              <td><strong>Volumes</strong></td>
+              <td>GPT, APM, MBR, APFS containers</td>
+            </tr>
+            <tr>
+              <td><strong>Filesystems</strong></td>
+              <td>APFS, HFS+, NTFS, ext4, FAT</td>
+            </tr>
+            <tr>
+              <td><strong>Archives</strong></td>
+              <td>TAR, ZIP, GZIP, BZIP2</td>
+            </tr>
+          </table>
+
+          <h3>Glob Pattern Matching</h3>
+          <p>
+            MARS extends dfVFS with full globstar (<code>**</code>) support for flexible pattern
+            matching:
+          </p>
+
+          <div class="card">
+            <div class="card-title">Glob Pattern Examples</div>
+            <table style="margin-top: 0.5rem">
+              <tr>
+                <th>Pattern</th>
+                <th>Matches</th>
+              </tr>
+              <tr>
+                <td><code>/Users/*/Library/Safari/History.db</code></td>
+                <td>Safari history for any user</td>
+              </tr>
+              <tr>
+                <td><code>**/Library/Caches</code></td>
+                <td>All cache directories (any depth)</td>
+              </tr>
+              <tr>
+                <td><code>/private/var/**/com.apple.*.db</code></td>
+                <td>Apple databases in /private/var tree</td>
+              </tr>
+            </table>
+          </div>
+
+          <h3>Globstar Implementation</h3>
+          <p>The <code>**</code> wildcard matches zero or more directory levels:</p>
+
+          <ul>
+            <li><code>**</code> at start: Matches from root (any depth prefix)</li>
+            <li><code>/**/</code> in middle: Matches zero or more intermediate directories</li>
+            <li><code>/**</code> at end: Matches everything below current level</li>
+            <li><code>*</code> alone: Matches exactly one directory level</li>
+          </ul>
+
+          <div class="card">
+            <div class="card-title">Pattern:</div>
+            <code>/Library/Caches</code>
+            <p><strong>Matches:</strong></p>
+            <ul>
+              <li>/Library/Caches (zero segments before)</li>
+              <li>/Users/admin/Library/Caches (two segments before)</li>
+              <li>/System/Volumes/Data/Users/admin/Library/Caches (many segments)</li>
+            </ul>
+            <p><strong>Does NOT match:</strong></p>
+            <ul>
+              <li>/Users/admin/Library/Caches/Chrome (extends past pattern)</li>
+            </ul>
+          </div>
+
+          <h3>Volume System Integration</h3>
+          <p>dfVFS provides automatic volume enumeration and metadata extraction:</p>
+
+          <ul>
+            <li><strong>GPT Partitions:</strong> Partition name, GUID, size, type</li>
+            <li><strong>APFS Containers:</strong> Volume names, encryption status, roles</li>
+            <li><strong>Volume Labels:</strong> Filesystem labels from volume attributes</li>
+          </ul>
+
+          <h3>EWF/E01 Mount Utilities</h3>
+          <p>MARS includes utilities for mounting forensic images for interactive exploration:</p>
+
+          <ul>
+            <li><strong>macOS:</strong> Requires Fuse-T for userspace filesystem mounting</li>
+            <li><strong>Windows:</strong> Arsenal Image Mounter or similar tools</li>
+            <li><strong>Linux:</strong> libewf + FUSE for native EWF support</li>
+          </ul>
+
+          <h3>Directory Filtering & Exclusion</h3>
+          <p>
+            To prevent hangs on directories with millions of cache files, MARS includes smart
+            exclusions:
+          </p>
+
+          <div class="card">
+            <div class="card-title">Skip Directories (Performance)</div>
+            <ul>
+              <li>
+                <code>*/*/Library/Caches/Google/Chrome/*/Code Cache</code>
+              </li>
+              <li><code>*/*/Library/Caches/com.apple.Safari/fsCachedData</code></li>
+              <li><code>*/*/Library/Caches/*/com.apple.metal</code></li>
+              <li><code>*/*/Library/Caches/*/GPUCache</code></li>
+            </ul>
+            <p style="margin-top: 0.5rem">
+              These directories contain hundreds of thousands of small cache files that slow down
+              scans without forensic value.
+            </p>
+          </div>
+
+          <div class="tip">
+            <div class="tip-title">Data Volume Variants</div>
+            MARS automatically generates <code>System/Volumes/Data/</code> pattern variants for
+            paths starting with <code>Users/</code>, <code>Library/</code>, <code>private/</code>,
+            or <code>var/</code>. This handles macOS Big Sur+ volume layout changes.
+          </div>
+        </section>
+
+        <!-- CONFIGURATION -->
+        <section id="configuration">
+          <h2>Configuration System</h2>
+          <p>
+            MARS uses a centralized configuration system defined in
+            <code>config/schema.py</code>. All settings are organized into logical sections with
+            dataclasses.
+          </p>
+
+          <h3>Configuration Sections</h3>
+
+          <div class="card">
+            <div class="card-title">MatchingConfig</div>
+            <p>Controls database matching and confidence thresholds:</p>
+            <ul>
+              <li><code>min_confidence</code>: Minimum match confidence (default 0.7)</li>
+              <li><code>min_rows</code>: Minimum rows required for valid match (default 10)</li>
+              <li><code>min_columns</code>: Minimum columns for substantial match (default 3)</li>
+              <li><code>semantic_anchor_threshold</code>: Minimum anchor score (default 2.0)</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">SemanticAnchorWeights</div>
+            <p>Weights for pattern detection in matching:</p>
+            <ul>
+              <li><code>uuid</code>: 1.0 (UUID pattern weight)</li>
+              <li><code>timestamp_text</code>: 0.9 (timestamp detection)</li>
+              <li><code>url</code>: 0.8 (URL pattern)</li>
+              <li><code>email</code>: 0.7 (email pattern)</li>
+              <li><code>uuid_in_pk</code>: 2.0 (UUID in primary key - strong signal)</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">SchemaComparisonConfig</div>
+            <p>Tables and prefixes to ignore during schema comparison:</p>
+            <ul>
+              <li>
+                <code>GLOBAL_IGNORABLE_TABLES</code>: sqlite_sequence, sqlite_stat*, meta,
+                z_metadata, etc.
+              </li>
+              <li><code>ignorable_prefixes</code>: sqlite_, sqlean_ (system tables)</li>
+              <li><code>ignorable_suffixes</code>: _content, _segments, _segdir (FTS tables)</li>
+              <li><code>salvage_tables</code>: lost_and_found, carved, recovered_rows</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">VariantSelectorConfig</div>
+            <p>Database variant selection behavior:</p>
+            <ul>
+              <li>
+                <code>dissect_all</code>: Attempt sqlite_dissect on all variants (default false)
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">CarverConfig</div>
+            <p>Byte-carving settings:</p>
+            <ul>
+              <li><code>ts_start</code>: Filter timestamps after this date (default 2015-01-01)</li>
+              <li><code>ts_end</code>: Filter timestamps before this date (default 2030-01-01)</li>
+              <li><code>filter_mode</code>: 'permissive', 'balanced', 'strict', or 'all'</li>
+              <li><code>decode_protobuf</code>: Attempt protobuf decoding (default true)</li>
+              <li><code>csv_export</code>: Generate CSV output (default false)</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">ExemplarScanConfig</div>
+            <p>Exemplar scanning parameters:</p>
+            <ul>
+              <li><code>epoch_min</code>: Minimum valid timestamp date (default 2000-01-01)</li>
+              <li><code>epoch_max</code>: Maximum valid timestamp date (default 2038-01-19)</li>
+              <li>
+                <code>min_role_sample_size</code>: Minimum rows for semantic role assignment
+                (default 5)
+              </li>
+              <li><code>enabled_catalog_groups</code>: Database groups to include (empty = all)</li>
+              <li><code>excluded_file_types</code>: File types to skip (e.g., 'cache', 'log')</li>
+            </ul>
+          </div>
+
+          <h3>Ignorable Tables</h3>
+          <p>
+            <code>GLOBAL_IGNORABLE_TABLES</code> defines tables that are always filtered during
+            schema comparison:
+          </p>
+
+          <table>
+            <tr>
+              <th>Category</th>
+              <th>Tables</th>
+            </tr>
+            <tr>
+              <td><strong>SQLite System</strong></td>
+              <td>sqlite_sequence, sqlite_stat1/2/3/4, sqlite_master, sqlite_temp_master</td>
+            </tr>
+            <tr>
+              <td><strong>Extensions</strong></td>
+              <td>sqlean_define, rtree_*, fts5_*, etc.</td>
+            </tr>
+            <tr>
+              <td><strong>CoreData</strong></td>
+              <td>meta, dbinfo, z_primarykey, z_metadata, z_modelcache</td>
+            </tr>
+          </table>
+
+          <h3>User-Configurable Settings</h3>
+          <p>
+            Settings marked with <code>user_configurable=True</code> are exposed in the UI and saved
+            to <code>.marsproj</code> files:
+          </p>
+
+          <ul>
+            <li><strong>Basic:</strong> Debug mode, progress bars</li>
+            <li><strong>Exemplar:</strong> Date ranges, catalog groups, excluded file types</li>
+            <li><strong>Carver:</strong> Timestamp filtering, protobuf decoding, CSV export</li>
+            <li><strong>Advanced:</strong> Variant selection, dissect options</li>
+          </ul>
+        </section>
+
+        <footer class="footer">
+          <p>MARS (macOS Artifact Recovery Suite) Technical Architecture by WarpedWing Labs</p>
+          <p>
+            <a href="mars_help.html" style="color: var(--link)">← Back to User Guide</a>
+          </p>
+        </footer>
+      </main>
+    </div>
+
+    <button class="theme-toggle" onclick="toggleTheme()">☀️ Light</button>
+    <script>
+      (function () {
+        // Dark mode is default - only switch to light if explicitly saved
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "🌙 Dark";
+        } else {
+          // Default to dark mode
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "🌙 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "☀️ Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>

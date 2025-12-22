@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MARS Pipeline - MARS Documentation</title>
+    <link href="../default.css" rel="stylesheet" type="text/css" />
+    <style>
+      /* Additional styles for markdown content */
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem 3rem;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.0rem;
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      blockquote {
+        border-left: 3px solid var(--primary);
+        margin: 1rem 0;
+        padding-left: 1rem;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <main>
+      <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+          <a href="../mars_help.html#additional_docs" class="back-link">&larr; Back to Help</a>
+        </div>
+        <div>
+          <img src="../../images/WarpedWingLabsLogo_Horizontal_W500.png" height="100" alt="WarpedWing Labs" />
+        </div>
+      </div>
+      <h1>Pipeline Module</h1>
+<p>The pipeline module contains all the core processing workflows for MARS.
+It's organized into specialized subdirectories, each handling a specific aspect of the forensic analysis pipeline.</p>
+<h2>Module Overview</h2>
+<h3>raw_scanner/</h3>
+<p><strong>Candidate scan processing for recovered/carved files</strong></p>
+<p>Processes files from disk images, including categorization, database variant selection, and output organization.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>candidate_orchestrator.py</code> - Main orchestrator coordinating candidate scan phases</li>
+<li><code>file_categorizer.py</code> - File type detection and classification</li>
+<li><code>database_carver.py</code> - SQLite database carving and recovery</li>
+<li><code>catalog_wifi_mapper.py</code> - WiFi artifact catalog mapping</li>
+<li><code>self_rubric_generator.py</code> - Generate rubrics from recovered databases</li>
+<li><code>stats_reporter.py</code> - Processing statistics reporting</li>
+</ul>
+<p><strong>Subdirectory:</strong></p>
+<ul>
+<li><code>db_variant_selector/</code> - Multi-variant database selection (O/C/R/D variants). See <code>db_variant_selector/README.md</code></li>
+</ul>
+<hr />
+<h3>exemplar_scanner/</h3>
+<p><strong>Exemplar scan for live/mounted macOS systems</strong></p>
+<p>Scans macOS systems to generate exemplar databases, schemas, and rubrics for forensic classification.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>exemplar_orchestrator.py</code> - Main orchestrator for exemplar scanning</li>
+<li><code>exemplar_cataloger.py</code> - Catalogs databases into exemplar catalog structure (Phases 3-4)</li>
+<li><code>database_processor.py</code> - Database copying and provenance tracking</li>
+<li><code>database_scanner.py</code> - Database discovery and scanning</li>
+<li><code>schema_generator.py</code> - Schema and rubric generation from exemplar databases</li>
+<li><code>dfvfs_manager.py</code> - dfVFS integration for disk image mounting</li>
+<li><code>workspace_manager.py</code> - Workspace and archive decompression management</li>
+<li><code>cleanup_manager.py</code> - Post-processing cleanup operations</li>
+</ul>
+<p><strong>Use When:</strong> Creating exemplar rubrics from known-good systems or mounted disk images</p>
+<hr />
+<h3>matcher/</h3>
+<p><strong>Rubric generation and schema utilities</strong></p>
+<p>Generates and manages rubrics (schema fingerprints) used for database classification.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>rubric_generator.py</code> - Generate rubrics from exemplar databases</li>
+<li><code>rubric_utils.py</code> - Rubric loading, matching, and comparison utilities</li>
+<li><code>generate_sqlite_schema_rubric.py</code> - Low-level schema extraction and rubric creation</li>
+<li><code>multi_user_splitter.py</code> - Split multi-user rubrics into user-specific versions</li>
+</ul>
+<p><strong>Use When:</strong> Working with rubrics for database classification</p>
+<hr />
+<h3>output/</h3>
+<p><strong>Output structure and database combination</strong></p>
+<p>Manages output directory structure and combines multiple database instances.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>database_combiner.py</code> - Merge multiple SQLite databases with deduplication</li>
+<li><code>structure.py</code> - Output directory structure management and file organization</li>
+</ul>
+<p><strong>Use When:</strong> Combining database fragments or organizing output files</p>
+<hr />
+<h3>lf_processor/</h3>
+<p><strong>Lost &amp; Found fragment reconstruction</strong></p>
+<p>Reconstructs databases from SQLite <code>lost_and_found</code> tables created by <code>.recover</code> operations.</p>
+<p>See <code>lf_processor/README.md</code> for detailed documentation.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>lf_orchestrator.py</code> - Main orchestrator for L&amp;F processing</li>
+<li><code>lf_merge.py</code> - Merge L&amp;F fragments with exemplar schemas</li>
+<li><code>lf_catalog.py</code> - Catalog exact matches</li>
+<li><code>lf_nearest.py</code> - Find nearest schema matches</li>
+<li><code>lf_orphan.py</code> - Handle unmatched fragments</li>
+<li><code>lf_splitter.py</code> - Split L&amp;F tables by schema</li>
+</ul>
+<p><strong>Use When:</strong> Recovering data from corrupted SQLite databases</p>
+<hr />
+<h3>fingerprinter/</h3>
+<p><strong>File type fingerprinting</strong></p>
+<p>Identifies file types by analyzing content structure rather than relying on extensions.</p>
+<p>See <code>fingerprinter/README.md</code> for detailed documentation.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>text_fingerprinter.py</code> - Identifies log types from text content patterns</li>
+</ul>
+<p><strong>Use When:</strong> Classifying recovered text files by type</p>
+<hr />
+<h3>mount_utils/</h3>
+<p><strong>Disk image mounting utilities</strong></p>
+<p>Handles mounting of E01 and other forensic disk image formats using dfVFS.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>dfvfs_glob_utils.py</code> - Glob pattern matching within mounted images</li>
+<li><code>e01_mounter.py</code> - E01 image mounting operations</li>
+<li><code>workflow.py</code> - End-to-end disk image processing workflow</li>
+</ul>
+<p><strong>Use When:</strong> Working with E01 or other forensic disk images</p>
+<hr />
+<h3>common/</h3>
+<p><strong>Shared pipeline utilities</strong></p>
+<p>Common utilities used across multiple pipeline modules.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>catalog_manager.py</code> - Database catalog operations and skip list management</li>
+</ul>
+<hr />
+<h3>comparison/</h3>
+<p><strong>Database comparison and reporting</strong></p>
+<p>Compares databases and generates HTML comparison reports.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>html_report.py</code> - Generate HTML comparison reports</li>
+</ul>
+<hr />
+<h2>Processing Workflows</h2>
+<h3>Exemplar Scan Flow</h3>
+<pre><code class="language-text">1. Mount/access source system
+   ↓
+2. exemplar_scanner/ - Discover and export databases
+   ↓
+3. matcher/ - Generate rubrics from exemplar schemas
+   ↓
+4. output/ - Organize into catalog structure
+</code></pre>
+<h3>Candidate Scan Flow</h3>
+<pre><code class="language-text">1. Mount disk image or access carved files
+   ↓
+2. raw_scanner/ - Categorize and process files
+   ↓
+3. db_variant_selector/ - Select best database variants
+   ↓
+4. lf_processor/ - Reconstruct from lost_and_found
+   ↓
+5. output/ - Generate final organized output
+</code></pre>
+<h2>Import Examples</h2>
+<pre><code class="language-python"># Exemplar scanning
+from mars.pipeline.exemplar_scanner.exemplar_orchestrator import ExemplarScanner
+
+# Rubric utilities
+from mars.pipeline.matcher.rubric_utils import load_rubric, match_schema
+
+# Database combination
+from mars.pipeline.output.database_combiner import merge_sqlite_databases
+
+# Text fingerprinting
+from mars.pipeline.fingerprinter.text_fingerprinter import identify_log_type
+</code></pre>
+<h2>See Also</h2>
+<ul>
+<li><code>Main README</code> - Project overview</li>
+<li><code>Carver Module</code> - Data carving utilities</li>
+<li><code>CLI Module</code> - Command-line interface</li>
+<li><code>Catalog</code> - Artifact recovery catalog</li>
+</ul>
+    <footer class="footer">
+      <p>MARS (macOS Artifact Recovery Suite) by WarpedWing Labs</p>
+    </footer>
+    </main>
+
+    <button class="theme-toggle" onclick="toggleTheme()">&#9728;&#65039; Light</button>
+    <script>
+      (function () {
+        const saved = localStorage.getItem("mars-theme");
+        if (saved === "light") {
+          document.body.removeAttribute("data-theme");
+          document.querySelector(".theme-toggle").textContent = "\ud83c\udf19 Dark";
+        } else {
+          document.body.setAttribute("data-theme", "dark");
+        }
+      })();
+      function toggleTheme() {
+        const body = document.body;
+        const btn = document.querySelector(".theme-toggle");
+        const isDark = body.getAttribute("data-theme") === "dark";
+        if (isDark) {
+          body.removeAttribute("data-theme");
+          btn.textContent = "\ud83c\udf19 Dark";
+          localStorage.setItem("mars-theme", "light");
+        } else {
+          body.setAttribute("data-theme", "dark");
+          btn.textContent = "\u2600\ufe0f Light";
+          localStorage.removeItem("mars-theme");
+        }
+      }
+    </script>
+  </body>
+</html>
