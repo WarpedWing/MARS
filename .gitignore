@@ -45,6 +45,7 @@ src/mars/catalog/backups
 #Device database schemas and rubrics
 *.json
 *.csv
+docs/
 
 
 # Large test files
