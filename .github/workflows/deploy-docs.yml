@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'src/resources/help/**'
+      - 'src/resources/images/**'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:  # Allow manual trigger
 
@@ -36,7 +37,7 @@ jobs:
         run: |
           mkdir -p _site
           cp -r src/resources/help/* _site/
-          cp -r src/resources/images/* _site/images/
+          cp -r src/resources/images/* _site/
           # Create index.html that redirects to mars_help.html
           cat > _site/index.html << 'EOF'
           <!DOCTYPE html>
