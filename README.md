@@ -44,8 +44,8 @@ ensures that **all candidate data that *can be* recovered *is* recovered**.
 MARS assesses and classifies the recovered data - including from within
 corrupt SQLite databases - then matches it against exemplar rubrics.
 
-Truly unrepairable databases are [byte-carved](src/mars/carver/README.md) with protobuf extraction and timestamp detection for
-manual analysis.
+Truly unrepairable databases are [byte-carved](src/mars/carver/README.md) with protobuf extraction
+and timestamp detection for manual analysis.
 
 ### Reports
 
