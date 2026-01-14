@@ -16,20 +16,31 @@ set "SCRIPT_DIR=%~dp0"
 set "INSTALL_DIR=%SCRIPT_DIR:~0,-1%"
 set "VENV_DIR=%INSTALL_DIR%\.venv"
 
-:: Check Python version
+:: Check Python version - try 'python' first, then 'py' launcher
 echo Checking Python...
+set "PYTHON_CMD="
 where python >nul 2>&1
-if errorlevel 1 (
+if not errorlevel 1 (
+    set "PYTHON_CMD=python"
+) else (
+    where py >nul 2>&1
+    if not errorlevel 1 (
+        set "PYTHON_CMD=py"
+    )
+)
+
+if not defined PYTHON_CMD (
     echo ERROR: Python is not installed or not in PATH.
     echo Please install Python 3.13 or higher from https://python.org
-    echo Make sure to check "Add Python to PATH" during installation.
+    echo Make sure to check "Add Python to PATH" during installation,
+    echo or use the Python Launcher ^(py^) which is installed by default.
     pause
     exit /b 1
 )
 
-for /f "tokens=*" %%i in ('python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"') do set PYTHON_VERSION=%%i
-for /f "tokens=*" %%i in ('python -c "import sys; print(sys.version_info.major)"') do set PYTHON_MAJOR=%%i
-for /f "tokens=*" %%i in ('python -c "import sys; print(sys.version_info.minor)"') do set PYTHON_MINOR=%%i
+for /f "tokens=*" %%i in ('%PYTHON_CMD% -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"') do set PYTHON_VERSION=%%i
+for /f "tokens=*" %%i in ('%PYTHON_CMD% -c "import sys; print(sys.version_info.major)"') do set PYTHON_MAJOR=%%i
+for /f "tokens=*" %%i in ('%PYTHON_CMD% -c "import sys; print(sys.version_info.minor)"') do set PYTHON_MINOR=%%i
 
 if %PYTHON_MAJOR% LSS 3 (
     echo ERROR: Python 3.13 or higher is required. Found: %PYTHON_VERSION%
@@ -41,7 +52,7 @@ if %PYTHON_MAJOR% EQU 3 if %PYTHON_MINOR% LSS 13 (
     pause
     exit /b 1
 )
-echo Found Python %PYTHON_VERSION%
+echo Found Python %PYTHON_VERSION% (using '%PYTHON_CMD%')
 
 :: Find wheel file
 echo.
@@ -73,7 +84,7 @@ if exist "%VENV_DIR%" (
     )
 )
 
-python -m venv "%VENV_DIR%"
+%PYTHON_CMD% -m venv "%VENV_DIR%"
 echo Virtual environment created
 
 :install_deps
@@ -100,7 +111,7 @@ echo MARS installed successfully
 echo.
 echo Creating tools junction...
 set "MARS_TOOLS_DIR=%INSTALL_DIR%\tools"
-for /f "tokens=*" %%i in ('python -c "import site; print(site.getsitepackages()[0])"') do set "SITE_PACKAGES=%%i"
+for /f "tokens=*" %%i in ('"%VENV_DIR%\Scripts\python" -c "import site; print(site.getsitepackages()[0])"') do set "SITE_PACKAGES=%%i"
 set "RESOURCES_DIR=%SITE_PACKAGES%\resources\windows"
 
 if exist "%RESOURCES_DIR%" (
