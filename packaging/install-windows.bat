@@ -98,7 +98,7 @@ set "WHEEL_DIR=%SCRIPT_DIR%wheels\windows-x64"
 
 echo Installing MARS...
 if exist "%WHEEL_DIR%\*.whl" (
-    echo Using pre-built wheels (fast install)
+    echo Using pre-built wheels
     pip install --find-links "%WHEEL_DIR%" "%WHEEL_FILE%"
 ) else (
     echo Pre-built wheels not found, building from source...
@@ -111,7 +111,7 @@ echo MARS installed successfully
 echo.
 echo Creating tools junction...
 set "MARS_TOOLS_DIR=%INSTALL_DIR%\tools"
-for /f "tokens=*" %%i in ('"%VENV_DIR%\Scripts\python" -c "import site; print(site.getsitepackages()[0])"') do set "SITE_PACKAGES=%%i"
+set "SITE_PACKAGES=%VENV_DIR%\Lib\site-packages"
 set "RESOURCES_DIR=%SITE_PACKAGES%\resources\windows"
 
 if exist "%RESOURCES_DIR%" (
@@ -177,7 +177,7 @@ echo   1. Open System Properties ^> Environment Variables
 echo   2. Add "%INSTALL_DIR%" to your PATH
 echo.
 echo Then run with just:
-echo   mars
+echo   "mars" or ".\mars"
 echo.
 
 :: Offer to add to PATH
