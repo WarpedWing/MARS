@@ -262,9 +262,9 @@ MARS builds upon the work of several open-source projects:
 
 - **[blackboxprotobuf](https://github.com/nccgroup/blackboxprotobuf)** (bbpb) - Protobuf decoding without .proto files
 - **[unfurl](https://github.com/obsidianforensics/unfurl)** - URL and timestamp parsing
-- **[libewf](https://github.com/WarpedWing/libewf)** - Expert Witness Format library
+- **[libewf](https://github.com/libyal/libewf)** - Expert Witness Format library
 ([MARS fork](https://github.com/WarpedWing/libewf) with macOS FUSE-T support)
-- **[sqlite_dissect](https://github.com/WarpedWing/sqlite_dissect)** - SQLite forensic parser by DC3 ([MARS fork](https://github.com/WarpedWing/sqlite-dissect))
+- **[sqlite_dissect](https://github.com/dod-cyber-crime-center/sqlite-dissect)** - SQLite forensic parser by DC3 ([MARS fork](https://github.com/WarpedWing/sqlite-dissect))
 - [SEGB Parser](https://github.com/cclgroupltd/ccl-segb) - by CCL Group
 
 ## Disclaimer
