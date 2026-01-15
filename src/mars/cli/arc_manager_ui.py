@@ -576,7 +576,7 @@ class ARCManagerUI:
             ]
 
             # Show guidance message based on state
-            glob_pattern = target.get("glob_pattern")
+            glob_pattern = target.get("glob_pattern") or (target.get("primary", {}) or {}).get("glob_pattern")
             file_type = target.get("file_type")
             if not glob_pattern:
                 self.console.print("[yellow]→ Set 'Glob Pattern' to unlock file type and other fields.[/yellow]\n")
@@ -588,6 +588,9 @@ class ARCManagerUI:
                 if field_name in target or field_name in FIELD_DEFINITIONS:
                     field_list.append(field_name)
                     value = target.get(field_name)
+                    # For glob_pattern, also check primary.glob_pattern
+                    if field_name == "glob_pattern" and value is None:
+                        value = (target.get("primary", {}) or {}).get("glob_pattern")
                     field_def = FIELD_DEFINITIONS.get(field_name, {})
                     label = field_def.get("label", field_name)
 

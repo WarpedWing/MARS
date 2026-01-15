@@ -109,6 +109,7 @@ authentication:
 
 biome:
   - name: Biome Streams
+    has_archives: true
     primary:
       glob_pattern: 'Users/*/Library/Biome/streams/restricted/*/*/*'
     description: Biome unified logging framework data
