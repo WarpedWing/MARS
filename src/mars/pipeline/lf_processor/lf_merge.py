@@ -139,6 +139,9 @@ def _copy_fts_table_data(source_db: Path, target_db: Path, table_name: str) -> i
     return rows_copied
 
 
+DEBUG_TARGETS = {"f688414152", "f799189712"}  # Notification Center, Message Entities
+
+
 def process_metamatch_group(
     group_id: str,
     group_info: dict,
@@ -167,6 +170,12 @@ def process_metamatch_group(
     group_label = group_info["group_label"]
     databases = group_info["databases"]
 
+    # Check if any debug target is in this group
+    is_debug_group = any(Path(r["case_path"]).stem in DEBUG_TARGETS for r in databases)
+    if is_debug_group:
+        logger.debug(f"  [DEBUG-MERGE] Processing group: {group_label} (id={group_id})")
+        logger.debug(f"    databases in group: {[Path(r['case_path']).stem for r in databases]}")
+
     # Progress tracking is handled by parent caller (lf_orchestrator)
     # Internal steps are logged but not reported via callback
 
@@ -178,10 +187,21 @@ def process_metamatch_group(
         if db_info and db_info["source_db"]:
             source_dbs.append(db_info["source_db"])
             db_names.append(db_name)
+        elif is_debug_group:
+            logger.debug(
+                f"    [DEBUG-MERGE] {db_name}: db_info={db_info is not None}, source_db={db_info.get('source_db') if db_info else 'N/A'}"
+            )
 
     if not source_dbs:
+        if is_debug_group:
+            logger.debug("    [DEBUG-MERGE] FAILED: No openable databases in group")
         logger.warning("    No openable databases in group, skipping")
         return {"success": False, "error": "No openable databases in group"}
+
+    if is_debug_group:
+        logger.debug(f"    [DEBUG-MERGE] source_dbs collected: {len(source_dbs)}")
+        for sdb, name in zip(source_dbs, db_names):
+            logger.debug(f"      {name}: {sdb}")
 
     # Count intact rows per source BEFORE merging
     # Uses optimized single-query counting (O(2) queries instead of O(n_tables + 1))
@@ -199,8 +219,15 @@ def process_metamatch_group(
         )
 
     except Exception as e:
+        if is_debug_group:
+            logger.debug(f"    [DEBUG-MERGE] FAILED to combine databases: {e}")
         logger.error(f"    Failed to combine databases: {e}")
         return {"success": False, "error": f"Failed to combine databases: {e}"}
+
+    if is_debug_group:
+        logger.debug(f"    [DEBUG-MERGE] Combined database created: {combined_db}")
+        combined_rows = _count_database_rows(combined_db)
+        logger.debug(f"    [DEBUG-MERGE] Combined database rows: {combined_rows}")
 
     # Step 3: Generate superrubric from combined database
 
@@ -253,6 +280,17 @@ def process_metamatch_group(
             "match_results": match_results,
             "record": record,  # Store record for access to exact_matches/metamatch
         }
+
+        if db_name in DEBUG_TARGETS:
+            logger.debug(f"    [DEBUG-MERGE] LF matching for {db_name}:")
+            logger.debug(f"      split_db: {split_db}")
+            logger.debug(f"      match_results count: {len(match_results) if match_results else 0}")
+            if match_results:
+                for lf_table, matches in list(match_results.items())[:5]:
+                    logger.debug(f"        {lf_table}: {len(matches)} match(es)")
+
+    if is_debug_group:
+        logger.debug(f"    [DEBUG-MERGE] all_matches collected: {len(all_matches)} database(s)")
 
     # Step 5: Create output directory and database schema
 
@@ -491,6 +529,13 @@ def process_metamatch_group(
     # Force garbage collection after deduplication to release SQLite connections
     gc.collect()
 
+    if is_debug_group:
+        logger.debug(f"    [DEBUG-MERGE] Final row counts for {group_label}:")
+        logger.debug(f"      total_intact_rows: {total_intact_rows}")
+        logger.debug(f"      total_lf_rows: {total_lf_rows}")
+        logger.debug(f"      total_fts_rows: {total_fts_rows}")
+        logger.debug(f"      lf_rows_per_source: {lf_rows_per_source}")
+
     # Check if we have any data - skip empty groups
     # Include FTS rows in the check since FTS-only databases are valid
     if total_intact_rows == 0 and total_lf_rows == 0 and total_fts_rows == 0:
@@ -499,6 +544,8 @@ def process_metamatch_group(
 
         if metamatches_dir.exists():
             cleanup_sqlite_directory(metamatches_dir)
+        if is_debug_group:
+            logger.debug(f"    [DEBUG-MERGE] SKIPPING empty group: {group_label}")
         logger.debug(f"    Skipping empty metamatch group: {group_label}")
         return {
             "success": False,
