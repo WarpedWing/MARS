@@ -117,6 +117,21 @@ else
     echo -e "${YELLOW}Note: Resources directory not found in site-packages${NC}"
 fi
 
+# Create symlink to mars package for easy source code access
+echo ""
+echo -e "${CYAN}Creating mars source symlink...${NC}"
+MARS_SRC_DIR="$INSTALL_DIR/mars_src"
+MARS_PKG_DIR="$SITE_PACKAGES/mars"
+
+if [ -d "$MARS_PKG_DIR" ]; then
+    # Remove existing symlink if present
+    [ -L "$MARS_SRC_DIR" ] && rm "$MARS_SRC_DIR"
+    ln -s "$MARS_PKG_DIR" "$MARS_SRC_DIR"
+    echo -e "${GREEN}MARS source accessible at: $MARS_SRC_DIR${NC}"
+else
+    echo -e "${YELLOW}Note: MARS package directory not found in site-packages${NC}"
+fi
+
 # Optional dependencies
 echo ""
 echo -e "${YELLOW}Optional Dependencies${NC}"
@@ -139,24 +154,30 @@ echo -e "${YELLOW}Optional: fuse-t${NC}"
 echo "fuse-t allows MARS to mount forensic disk images (E01, raw)"
 echo "as virtual file systems for direct analysis."
 echo ""
-read -p "Install fuse-t via Homebrew? [y/N] " response
-if [[ "$response" =~ ^[Yy]$ ]]; then
-    if ! command -v brew &> /dev/null; then
-        echo -e "${YELLOW}Homebrew not found. Install from https://brew.sh first.${NC}"
-        echo "Then run:"
+
+# Check if fuse-t is already installed
+if command -v brew &> /dev/null && brew list --cask fuse-t &> /dev/null; then
+    echo -e "${GREEN}fuse-t is already installed${NC}"
+else
+    read -p "Install fuse-t via Homebrew? [y/N] " response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        if ! command -v brew &> /dev/null; then
+            echo -e "${YELLOW}Homebrew not found. Install from https://brew.sh first.${NC}"
+            echo "Then run:"
+            echo "  brew tap macos-fuse-t/homebrew-cask"
+            echo "  brew install fuse-t fuse-t-sshfs"
+        else
+            echo -e "${CYAN}Installing fuse-t...${NC}"
+            brew tap macos-fuse-t/homebrew-cask
+            brew install fuse-t
+            brew install fuse-t-sshfs
+            echo -e "${GREEN}fuse-t installed successfully${NC}"
+        fi
+    else
+        echo "Skipping fuse-t. You can install it later with:"
         echo "  brew tap macos-fuse-t/homebrew-cask"
         echo "  brew install fuse-t fuse-t-sshfs"
-    else
-        echo -e "${CYAN}Installing fuse-t...${NC}"
-        brew tap macos-fuse-t/homebrew-cask
-        brew install fuse-t
-        brew install fuse-t-sshfs
-        echo -e "${GREEN}fuse-t installed successfully${NC}"
     fi
-else
-    echo "Skipping fuse-t. You can install it later with:"
-    echo "  brew tap macos-fuse-t/homebrew-cask"
-    echo "  brew install fuse-t fuse-t-sshfs"
 fi
 
 # Create launcher scripts

@@ -128,6 +128,24 @@ if exist "%RESOURCES_DIR%" (
     echo Note: Resources directory not found in site-packages
 )
 
+:: Create junction to mars package for easy source code access
+echo.
+echo Creating mars source junction...
+set "MARS_SRC_DIR=%INSTALL_DIR%\mars_src"
+set "MARS_PKG_DIR=%SITE_PACKAGES%\mars"
+
+if exist "%MARS_PKG_DIR%" (
+    if exist "%MARS_SRC_DIR%" rmdir "%MARS_SRC_DIR%" 2>nul
+    mklink /J "%MARS_SRC_DIR%" "%MARS_PKG_DIR%" >nul 2>&1
+    if exist "%MARS_SRC_DIR%" (
+        echo MARS source accessible at: %MARS_SRC_DIR%
+    ) else (
+        echo Note: Could not create mars_src junction. Run as administrator if needed.
+    )
+) else (
+    echo Note: MARS package directory not found in site-packages
+)
+
 :: Optional dependencies
 echo.
 echo ---------------------------------------------------------------
