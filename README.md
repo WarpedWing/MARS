@@ -7,7 +7,8 @@ forensic interest from a reference system.
 In some cases, MARS can recover **thousands more database rows and hundreds of extra days of data**
 beyond what exists in the original reference files alone.
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/mars_main.png" alt="MARS main window" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/mars_main.png"
+alt="MARS main window" />
 
 > <sub>MARS Main Menu</sub>
 
@@ -36,8 +37,10 @@ beyond what exists in the original reference files alone.
 
 ### Exemplar Scan
 
- MARS uses a catalog of known artifacts to collect target files from an exemplar
- system. It can scan most disk image formats (EWF, etc.), folders, archives, and live macOS
+ MARS uses a catalog of known artifacts to collect target files from an [exemplar
+ system](https://warpedwing.github.io/MARS/help/mars_help.html#exemplar-scan).
+
+It can scan most disk image formats (EWF, etc.), folders, archives, and live macOS
  systems.
 
  <img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/arc.png" alt="MARS catalog" />
@@ -49,35 +52,38 @@ beyond what exists in the original reference files alone.
  Artifacts with associated archives - like Powerlog's .gz backups - are automatically
  decompressed, deduplicated, and combined.
 
-Databases are then "fingerprinted" column-by-column to create rubrics for matching candidates
+Databases are then ["fingerprinted"](https://warpedwing.github.io/MARS/help/mars_architecture.html)
+column-by-column to create rubrics for matching candidates
 against.
 
 ### Candidates Scan
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/l_and_f.png" alt="MARS candidate scan" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/l_and_f.png"
+alt="MARS candidate scan" />
 
 > <sub>MARS catalogs a powerlog database during a Candidate Scan</sub>
 
 <br />
 
-The [recovery and vetting process](src/mars/pipeline/raw_scanner/db_variant_selector/README.md)
+The [recovery and vetting process](https://warpedwing.github.io/MARS/help/mars_help.html#candidates-scan)
 ensures that **all candidate data that *can be* recovered *is* recovered**.
 
 MARS assesses and classifies the recovered data - including from within
 corrupt SQLite databases - then matches it against exemplar rubrics.
 
-Truly unrepairable databases are [byte-carved](src/mars/carver/README.md) with protobuf extraction
+Truly unrepairable databases are [byte-carved](https://warpedwing.github.io/MARS/help/pages/carver.html) with protobuf extraction
 and timestamp detection for manual analysis.
 
 ### Reports
 
-Both Exemplar and Candidate reports provide quick links to artifact folders and [module reports](src/mars/report_modules/README.md),
+Both Exemplar and Candidate reports provide quick links to artifact folders and [module reports](https://warpedwing.github.io/MARS/help/mars_help.html#report_modules),
 such as WiFi history and Biome parsing.
 
 Data Comparison Reports show exactly how much data you've gained beyond baseline, measured in rows
 and days, and include a comprehensive zoomable timeline.
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/timeline_crop.png" alt="MARS comparison timeline" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/timeline_crop.png"
+alt="MARS comparison timeline" />
 
 > <sub>Exemplar vs Candidate data timeline, based on tables with timestamp data.</sub>
 
@@ -90,7 +96,8 @@ and days, and include a comprehensive zoomable timeline.
  [mac_apt](https://github.com/ydkhatri/mac_apt), [APOLLO](https://github.com/mac4n6/APOLLO),
  [plaso](https://github.com/log2timeline/plaso), and others.
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/export_full.png" alt="Export full path" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/export_full.png"
+alt="Export full path" />
 
 > <sub>Full path exports maintain the original macOS file structure of the exemplar</sub>
 
@@ -100,7 +107,8 @@ The combined export deduplicates and merges data while maintaining its integrity
 profile account data is never mixed. An optional database source column marks each row's origin -
 so you can always trace the information back to its source.
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/data_source.png" alt="Data source column" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/data_source.png"
+alt="Data source column" />
 
 > <sub>The data source column tracks exemplar, found, and carved data (and original filenames).</sub>
 
@@ -122,7 +130,8 @@ pipeline on any set of files to automatically recover as much data as possible. 
 - Export and import anonymized exemplar catalog packages to share with other MARS users
 - In-depth HTML documentation (no internet required)
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/mnt_ewf.png" alt="EWF mounted in macOS" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/mnt_ewf.png"
+alt="EWF mounted in macOS" />
 
 > <sub>macOS EWF image shown mounted in macOS</sub>
 
@@ -135,13 +144,15 @@ pipeline on any set of files to automatically recover as much data as possible. 
 - [Firefox JSONLZ4](src/mars/report_modules/firefox_jsonlz4_parser/README.md) parsing
 - [Firefox cache](src/mars/report_modules/firefox_cache_parser/README.md) parsing (extract images, HTML, etc.)
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/wifi_known_overlay_crop.png" alt="Wifi known networks" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/wifi_known_overlay_crop.png"
+alt="Wifi known networks" />
 
 > <sub>WiFi Report - Known Networks</sub>
 
 <br />
 
-<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/network_loc_map.png" alt="Wifi location map" />
+<img src="https://raw.githubusercontent.com/WarpedWing/WarpedWing/refs/heads/main/mars_ss/network_loc_map.png"
+alt="Wifi location map" />
 
 > <sub>WiFi Report - interactive location map with accuracy radius</sub>
 
@@ -322,7 +333,8 @@ MARS builds upon the work of several open-source projects:
 - **[unfurl](https://github.com/obsidianforensics/unfurl)** - URL and timestamp parsing
 - **[libewf](https://github.com/libyal/libewf)** - Expert Witness Format library
 ([MARS fork](https://github.com/WarpedWing/libewf) with macOS FUSE-T support)
-- **[sqlite_dissect](https://github.com/dod-cyber-crime-center/sqlite-dissect)** - SQLite forensic parser by DC3 ([MARS fork](https://github.com/WarpedWing/sqlite-dissect))
+- **[sqlite_dissect](https://github.com/dod-cyber-crime-center/sqlite-dissect)** -
+SQLite forensic parser by DC3 ([MARS fork](https://github.com/WarpedWing/sqlite-dissect))
 - [SEGB Parser](https://github.com/cclgroupltd/ccl-segb) - by CCL Group
 
 ## Disclaimer
