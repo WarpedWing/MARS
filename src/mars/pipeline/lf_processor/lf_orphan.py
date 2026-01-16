@@ -14,6 +14,7 @@ Output: databases/found_data/{db_name}_orphans_{hash}/
 
 from __future__ import annotations
 
+import gc
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
@@ -216,6 +217,9 @@ def process_orphan_tables(
             orphan_results[db_name] = orphan_result
             total_orphan_databases += 1
             total_orphan_tables += len(orphan_result["tables"])
+
+        # Force garbage collection after each database to release SQLite connections
+        gc.collect()
 
     logger.debug(
         f"Orphan: {total_orphan_databases} database(s) created, {total_orphan_tables} orphan table(s) preserved"

@@ -15,6 +15,7 @@ Output: databases/found_data/{exemplar_name}/{exemplar_name}.sqlite
 
 from __future__ import annotations
 
+import gc
 import json
 import re
 from collections import defaultdict
@@ -201,6 +202,10 @@ def match_nearest_exemplar_databases(
                     "exemplar_info": exemplar_info,  # Keep exemplar path
                 }
             )
+
+        # Force garbage collection after each database to release any unreferenced
+        # connections and prevent file descriptor exhaustion (ERRNO 24)
+        gc.collect()
 
     # Summary
     total_matches = sum(len(dbs) for dbs in nearest_tracking.values())

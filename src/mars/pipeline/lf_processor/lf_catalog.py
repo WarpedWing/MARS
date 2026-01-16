@@ -204,6 +204,10 @@ def match_catalog_databases(
                 }
             )
 
+        # Force garbage collection after each catalog group to release SQLite
+        # connections opened by match_lf_tables_to_exemplars() (prevents ERRNO 24)
+        gc.collect()
+
     logger.debug(f"Catalog: {len(catalog_tracking)} catalog group(s) matched")
 
     return catalog_tracking
@@ -411,6 +415,10 @@ def create_catalog_outputs(
                 logger.debug(f"      Moved empty catalog to empty/: {exemplar_name}")
             else:
                 total_created += 1
+
+        # Force garbage collection after each exemplar to release any unreferenced
+        # connections and prevent file descriptor exhaustion (ERRNO 24)
+        gc.collect()
 
     # Create _multi catalogs for shared tables
     multi_created = 0

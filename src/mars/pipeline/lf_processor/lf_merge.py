@@ -19,6 +19,7 @@ Output: databases/metamatches/{group_label}/{group_label}.sqlite
 
 from __future__ import annotations
 
+import gc
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -420,6 +421,9 @@ def process_metamatch_group(
         except Exception as e:
             logger.warning(f"      Error copying {table_name}: {e}")
 
+    # Force garbage collection after copying all tables to release SQLite connections
+    gc.collect()
+
     # Step 7: Process matched LF data from each source database
 
     total_lf_rows = 0
@@ -467,6 +471,9 @@ def process_metamatch_group(
 
         lf_rows_per_source[db_name] = source_lf_rows
 
+        # Force garbage collection after each source database to release connections
+        gc.collect()
+
     # Step 8: Deduplicate all tables that received LF data
 
     total_dupes_removed = 0
@@ -480,6 +487,9 @@ def process_metamatch_group(
             total_dupes_removed += dupes
         except Exception as e:
             logger.warning(f"      Error deduplicating {table_name}: {e}")
+
+    # Force garbage collection after deduplication to release SQLite connections
+    gc.collect()
 
     # Check if we have any data - skip empty groups
     # Include FTS rows in the check since FTS-only databases are valid

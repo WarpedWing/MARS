@@ -34,7 +34,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import contextlib
+import gc
 import hashlib
+import json
 import os
 import sqlite3
 import time
@@ -158,15 +160,18 @@ def _jsonl_writer_thread(write_queue: Queue, results_path: Path) -> None:
         write_queue: Queue containing records to write (dict objects)
         results_path: Path to JSONL results file
     """
-    while True:
-        record = write_queue.get()
-        if record is None:  # Sentinel value signals shutdown
-            write_queue.task_done()
-            break
-        try:
-            write_jsonl(results_path, record)
-        finally:
-            write_queue.task_done()
+    # Keep file handle open for duration of processing to avoid FD exhaustion
+    with results_path.open("a", encoding="utf-8") as f:
+        while True:
+            record = write_queue.get()
+            if record is None:  # Sentinel value signals shutdown
+                write_queue.task_done()
+                break
+            try:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f.flush()  # Ensure data is written promptly
+            finally:
+                write_queue.task_done()
 
 
 # ==========================================================================
@@ -753,8 +758,10 @@ def main(
     writer_thread = Thread(target=_jsonl_writer_thread, args=(write_queue, results_path), daemon=True)
     writer_thread.start()
 
-    # Hardcoded max workers (user requested not to make this configurable)
-    max_workers = 4
+    # Single-threaded processing to prevent FD exhaustion
+    # Each database can consume 6+ file descriptors during variant creation
+    # (subprocess pipes, SQLite connections, temp files)
+    max_workers = 1
 
     # Process databases with Rich progress bar (or fallback to simple iteration)
     if richConsole:
@@ -830,6 +837,10 @@ def main(
                             advance=1,
                             description=f"[cyan]({db_name})",
                         )
+
+                    # Force garbage collection after each database to prevent FD buildup
+                    # Without this, subprocess calls (attempt_recover) can fail from FD exhaustion
+                    gc.collect()
     else:
         # Fallback: process without Rich progress bar
         logger.info(f"Processing {len(cases)} databases with {max_workers} workers...")
@@ -873,9 +884,17 @@ def main(
                     # Log any unexpected errors from worker
                     logger.warning(f"Error processing {case_path.name}: {e}")
 
+                # Force garbage collection after each database to prevent FD buildup
+                # Without this, subprocess calls (attempt_recover) can fail from FD exhaustion
+                gc.collect()
+
     # Shutdown writer thread cleanly
     write_queue.put(None)  # Sentinel to stop writer
     writer_thread.join()
+
+    # Force garbage collection to release any lingering file handles
+    # This helps prevent FD exhaustion (ERRNO 24) on systems with low limits
+    gc.collect()
 
     # Get final statistics
     dissect_stats = safe_stats.get_dissect_stats()

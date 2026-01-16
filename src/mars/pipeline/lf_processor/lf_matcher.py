@@ -5,6 +5,7 @@ Matches LF split tables against exemplar rubrics with strict type checking,
 nfield validation, and confidence scoring.
 """
 
+import gc
 import json
 import sqlite3
 from pathlib import Path
@@ -1000,5 +1001,8 @@ def match_lf_tables_to_exemplars(
     for lf_table in lf_tables:
         matches = match_lf_table_to_exemplars(split_db, lf_table, filtered_rubrics, per_db_ignorable_tables)
         results[lf_table] = matches
+
+    # Force garbage collection after processing all LF tables to release SQLite connections
+    gc.collect()
 
     return results

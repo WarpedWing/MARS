@@ -16,6 +16,7 @@ Handles FTS5 virtual tables specially:
 """
 
 import bz2
+import gc
 import gzip
 import re
 import shutil
@@ -388,6 +389,9 @@ def merge_sqlite_databases(
                 stats["errors"].append(error_msg)
                 logger.warning(f"      {error_msg}")
 
+            # Force garbage collection after each source DB to release connections
+            gc.collect()
+
         dst_conn.commit()
 
         # Deduplicate all merged tables
@@ -406,6 +410,9 @@ def merge_sqlite_databases(
                 logger.debug(f"      Failed to deduplicate {table_name}: {e}")
 
         dst_conn.commit()
+
+        # Force garbage collection before FTS5 processing to release connections
+        gc.collect()
 
         # Create FTS5 virtual tables after all content tables are populated
         # This ensures the content tables exist for content= FTS tables
@@ -462,6 +469,9 @@ def merge_sqlite_databases(
                     if "already exists" not in str(e).lower():
                         logger.debug(f"      Could not create FTS5 table {fts_name}: {e}")
             dst_conn.commit()
+
+            # Force garbage collection after FTS5 processing to release connections
+            gc.collect()
 
         # Switch from WAL to DELETE mode to ensure all data is in the main file
         # This removes the WAL file and makes the database fully self-contained

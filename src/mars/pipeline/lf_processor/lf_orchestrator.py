@@ -305,6 +305,7 @@ class LFOrchestrator:
             ctx.remove_sub(phase1_sub)
             logger.debug(f"Phase 1 complete: {len(prepared_databases)} database(s) prepared")
             ctx.update_main("Phase 1/7: Complete", phase=1)
+            gc.collect()  # Release file handles between phases
 
             if not prepared_databases:
                 return
@@ -389,11 +390,15 @@ class LFOrchestrator:
                             "error": str(e),
                         }
 
+                    # Release file handles after each group to prevent FD exhaustion
+                    gc.collect()
+
                 ctx.update_sub(phase3_sub, total_groups)
                 ctx.remove_sub(phase3_sub)
 
             logger.debug(f"Phase 3 complete: {len(metamatch_results)} metamatch group(s) processed")
             ctx.update_main("Phase 3/7: Complete", phase=3)
+            gc.collect()  # Release file handles between phases
 
             # ==================================================================
             # Initialize consumed_lf_tables tracking from MERGE results
@@ -458,6 +463,7 @@ class LFOrchestrator:
                 )
 
             ctx.update_main("Phase 4/7: Complete", phase=4)
+            gc.collect()  # Release file handles between phases
 
             # ==================================================================
             # PHASE 5: NEAREST - Match and reconstruct
@@ -503,6 +509,7 @@ class LFOrchestrator:
                 )
 
             ctx.update_main("Phase 5/7: Complete", phase=5)
+            gc.collect()  # Release file handles between phases
 
             # ==================================================================
             # PHASE 6: ORPHAN - Unmatched LF tables
@@ -547,6 +554,7 @@ class LFOrchestrator:
                 )
 
             ctx.update_main("Phase 6/7: Complete", phase=6)
+            gc.collect()  # Release file handles between phases
 
             # ==================================================================
             # PHASE 7: Reclassify found_data based on recovery results

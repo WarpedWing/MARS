@@ -8,6 +8,7 @@ Used by both CATALOG (exact match) and NEAREST (best-fit) processors.
 
 from __future__ import annotations
 
+import gc
 import json
 import sqlite3
 from pathlib import Path
@@ -446,6 +447,10 @@ def reconstruct_exemplar_database(
             "lf_rows": lf_rows_per_source.get(db_name, 0),
         }
         source_db_list.append(source_info)
+
+    # Force garbage collection to release any unreferenced connections
+    # before opening final readonly connection (prevents FD exhaustion)
+    gc.collect()
 
     # Get table-level statistics
     with readonly_connection(output_db) as con:

@@ -264,6 +264,8 @@ def attempt_clone(
 
     # --- 4) .dump | sqlite3 (last resort; keeps going past minor errors) ---
     if sqlite3_bin:
+        p1 = None
+        p2 = None
         try:
             # Use encoding with errors="replace" to handle binary data in corrupted DBs
             p1 = subprocess.Popen(
@@ -283,14 +285,41 @@ def attempt_clone(
                 encoding="utf-8",
                 errors="replace",
             )
+            # Allow p1 to receive SIGPIPE if p2 exits
             if p1.stdout:
                 p1.stdout.close()
+
             _, _ = p2.communicate(timeout=180)
+
+            # CRITICAL: Wait for p1 to finish and reap its process to avoid FD leak
+            p1.wait(timeout=10)
+
             if out_tmp.exists() and out_tmp.stat().st_size > 0:
                 shutil.move(str(out_tmp), str(out_final))
                 return out_final
+        except subprocess.TimeoutExpired:
+            # Kill both processes on timeout to avoid zombie processes
+            if p2:
+                p2.kill()
+                p2.wait()
+            if p1:
+                p1.kill()
+                p1.wait()
         except Exception:
             pass
+        finally:
+            # Ensure processes are reaped even on early return to prevent FD leaks
+            for proc in [p1, p2]:
+                if proc is not None and proc.poll() is None:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1)
+                    except Exception:
+                        try:
+                            proc.kill()
+                            proc.wait()
+                        except Exception:
+                            pass
 
     return None
 

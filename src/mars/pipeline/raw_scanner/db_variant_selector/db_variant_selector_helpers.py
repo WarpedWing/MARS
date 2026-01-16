@@ -744,25 +744,29 @@ def rebuild_sqlite_dissect_to_exemplar_shape(
         with contextlib.suppress(Exception):
             out_db.unlink()
 
-    con_src = sqlite3.connect(f"file:{dissect_db.as_posix()}?mode=ro", uri=True)
-    con_src.row_factory = sqlite3.Row
-    con_ex = sqlite3.connect(f"file:{exemplar_db.as_posix()}?mode=ro", uri=True)
-    con_ex.row_factory = sqlite3.Row
-    con_out = sqlite3.connect(str(out_db))
-    con_out.execute("PRAGMA journal_mode=WAL;")
-    con_out.execute("PRAGMA synchronous=OFF;")
+    # Use ExitStack to ensure all connections are properly closed even if
+    # later connections fail to open (prevents FD leaks on partial failures)
+    with contextlib.ExitStack() as stack:
+        con_src = stack.enter_context(sqlite3.connect(f"file:{dissect_db.as_posix()}?mode=ro", uri=True))
+        con_src.row_factory = sqlite3.Row
 
-    tables_created = []
-    rows_inserted = {}
-    rows_source = {}
-    copied_cols_by_table = {}
-    missing_cols_by_table = {}
-    errors_by_table = {}
-    blob_filtered_rows_by_table = {}
-    blob_cleaned_rows_by_table = {}
-    rows_rejected_by_table = {}
-    rejection_reasons_by_table = {}
-    try:
+        con_ex = stack.enter_context(sqlite3.connect(f"file:{exemplar_db.as_posix()}?mode=ro", uri=True))
+        con_ex.row_factory = sqlite3.Row
+
+        con_out = stack.enter_context(sqlite3.connect(str(out_db)))
+        con_out.execute("PRAGMA journal_mode=WAL;")
+        con_out.execute("PRAGMA synchronous=OFF;")
+
+        tables_created = []
+        rows_inserted = {}
+        rows_source = {}
+        copied_cols_by_table = {}
+        missing_cols_by_table = {}
+        errors_by_table = {}
+        blob_filtered_rows_by_table = {}
+        blob_cleaned_rows_by_table = {}
+        rows_rejected_by_table = {}
+        rejection_reasons_by_table = {}
         # Enumerate exemplar tables
         cur = con_ex.execute("SELECT name FROM sqlite_master WHERE type='table'")
         exemplar_tables = [r[0] for r in cur.fetchall() if r and r[0]]
@@ -1091,13 +1095,7 @@ def rebuild_sqlite_dissect_to_exemplar_shape(
             "rows_rejected": rows_rejected_by_table,
             "rejection_reasons": rejection_reasons_by_table,
         }
-    finally:
-        with contextlib.suppress(Exception):
-            con_out.close()
-        with contextlib.suppress(Exception):
-            con_src.close()
-        with contextlib.suppress(Exception):
-            con_ex.close()
+        # Note: ExitStack context manager automatically closes all connections
 
 
 # ==========================================================================

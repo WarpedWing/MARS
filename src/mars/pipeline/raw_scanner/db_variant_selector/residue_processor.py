@@ -499,9 +499,10 @@ def process_results(
         "total_kept_files": 0,
     }
 
-    # Process records in batches, with periodic gc.collect() for Windows handle cleanup
-    # On macOS/Linux, skip gc.collect() since file handles are released immediately
-    batch_size = 100  # Increased from 50 for better performance
+    # Process records in batches, with periodic gc.collect() for file handle cleanup
+    # CRITICAL: gc.collect() is required on ALL platforms to prevent FD exhaustion (ERRNO 24)
+    # SQLite connections may not be released until garbage collected even with context managers
+    batch_size = 25  # Reduced from 100 for more frequent FD cleanup
     for i, record in enumerate(case_records, 1):
         result = process_case_record(
             record=record,
@@ -522,8 +523,9 @@ def process_results(
         if lf.get("extracted"):
             stats["lost_and_found_extracted"] += 1
 
-        # Periodic gc.collect() every batch_size records (Windows handle cleanup only)
-        if is_windows() and i % batch_size == 0:
+        # Periodic gc.collect() every batch_size records to release SQLite connections
+        # Required on ALL platforms - macOS also accumulates FDs without explicit gc
+        if i % batch_size == 0:
             gc.collect()
 
         cleanup = result.get("cleanup", {})

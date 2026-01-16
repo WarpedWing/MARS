@@ -6,6 +6,7 @@ with provenance tracking (data_source column).
 """
 
 import contextlib
+import gc
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -676,9 +677,6 @@ def insert_lf_data_into_table(
     Returns:
         Number of rows inserted
     """
-    target_con = sqlite3.connect(target_db)
-    rejected_con = None
-
     total_inserted = 0
 
     # Build INSERT statement
@@ -707,7 +705,11 @@ def insert_lf_data_into_table(
     rejection_reasons = []
     rows_byteswap_corrected = 0
 
-    try:
+    # Use ExitStack for proper connection cleanup to prevent FD exhaustion
+    with contextlib.ExitStack() as stack:
+        target_con = stack.enter_context(sqlite3.connect(target_db))
+        rejected_con = None  # Opened lazily and added to stack when needed
+
         # Process each LF table
         with readonly_connection(source_lf_db) as source_con:
             for lf_table in source_lf_tables:
@@ -749,9 +751,9 @@ def insert_lf_data_into_table(
                         if rows_rejected <= 5:
                             rejection_reasons.append(rejection_reason)
 
-                        # Save rejected row to rejected database
-                        if not rejected_con:
-                            rejected_con = sqlite3.connect(rejected_db_path)
+                        # Save rejected row to rejected database (lazy open, added to stack)
+                        if rejected_con is None:
+                            rejected_con = stack.enter_context(sqlite3.connect(rejected_db_path))
 
                         # Define rejected_columns (used for both table creation and insertion)
                         rejected_columns = target_columns + ["rejection_reason"]
@@ -805,7 +807,7 @@ def insert_lf_data_into_table(
                     # Only count as inserted if row was actually added (not skipped by OR IGNORE)
                     total_inserted += cursor_result.rowcount
 
-        # Commit and finalize before closing
+        # Commit and finalize before ExitStack closes connections
         target_con.commit()
 
         # Switch to DELETE mode to ensure data is in the main file
@@ -815,11 +817,7 @@ def insert_lf_data_into_table(
         # Commit rejected database if used
         if rejected_con:
             rejected_con.commit()
-    finally:
-        # Always close connections to prevent file locks on Windows
-        target_con.close()
-        if rejected_con:
-            rejected_con.close()
+    # ExitStack automatically closes all connections here
 
     # Explicitly delete WAL files (Windows compatibility)
     cleanup_wal_files(target_db)
@@ -827,6 +825,9 @@ def insert_lf_data_into_table(
     # Log byte-swap corrections
     if rows_byteswap_corrected > 0:
         logger.debug(f"  L&F byte-swap corrections: {rows_byteswap_corrected} rows corrected in {target_table}")
+
+    # Force garbage collection to release SQLite connections
+    gc.collect()
 
     return total_inserted
 
@@ -855,267 +856,274 @@ def copy_table_data_with_provenance(
     Returns:
         Number of rows copied
     """
-    target_con = sqlite3.connect(target_db)
-    rejected_con = None
-
-    # Get column lists from both source and target tables
+    # Get column lists from source table first (before opening target connection)
     with readonly_connection(source_db) as source_con:
         cursor = source_con.execute(f"PRAGMA table_info({quote_identifier(source_table)})")
         source_columns_all = [row[1] for row in cursor.fetchall() if row[1] != "data_source"]
 
-    cursor = target_con.execute(f"PRAGMA table_info({quote_identifier(target_table)})")
-    target_schema_rows = cursor.fetchall()
-    target_columns_all = [row[1] for row in target_schema_rows if row[1] != "data_source"]
+    # Use ExitStack for proper connection cleanup to prevent FD exhaustion
+    with contextlib.ExitStack() as stack:
+        target_con = stack.enter_context(sqlite3.connect(target_db))
+        rejected_con = None  # Opened lazily and added to stack when needed
 
-    # Only copy columns that exist in BOTH source and target (intersection)
-    # This handles schema mismatches where source has different columns than target
-    common_columns = [col for col in source_columns_all if col in target_columns_all]
+        cursor = target_con.execute(f"PRAGMA table_info({quote_identifier(target_table)})")
+        target_schema_rows = cursor.fetchall()
+        target_columns_all = [row[1] for row in target_schema_rows if row[1] != "data_source"]
 
-    if not common_columns:
-        # No common columns, can't copy any data
-        target_con.close()
-        return 0
+        # Only copy columns that exist in BOTH source and target (intersection)
+        # This handles schema mismatches where source has different columns than target
+        common_columns = [col for col in source_columns_all if col in target_columns_all]
 
-    # Exclude INTEGER PRIMARY KEY columns to avoid ID collisions
-    # PRAGMA table_info returns: (cid, name, type, notnull, dflt_value, pk)
-    integer_pk_cols = set()
-    for col_info in target_schema_rows:
-        col_name = col_info[1]
-        col_type = col_info[2]
-        is_pk = col_info[5]
-        # Single-column INTEGER PRIMARY KEY is auto-increment in SQLite
-        if is_pk == 1 and col_type.upper() in ("INTEGER", "INT"):
-            # Check if it's the only PK column (not part of composite PK)
-            pk_count = sum(1 for c in target_schema_rows if c[5] > 0)
-            if pk_count == 1:
-                integer_pk_cols.add(col_name)
+        if not common_columns:
+            # No common columns, can't copy any data
+            # ExitStack will close target_con automatically
+            return 0
 
-    # Filter out INTEGER PRIMARY KEY from copy - SQLite will auto-assign new IDs
-    source_columns = [c for c in common_columns if c not in integer_pk_cols]
+        # Exclude INTEGER PRIMARY KEY columns to avoid ID collisions
+        # PRAGMA table_info returns: (cid, name, type, notnull, dflt_value, pk)
+        integer_pk_cols = set()
+        for col_info in target_schema_rows:
+            col_name = col_info[1]
+            col_type = col_info[2]
+            is_pk = col_info[5]
+            # Single-column INTEGER PRIMARY KEY is auto-increment in SQLite
+            if is_pk == 1 and col_type.upper() in ("INTEGER", "INT"):
+                # Check if it's the only PK column (not part of composite PK)
+                pk_count = sum(1 for c in target_schema_rows if c[5] > 0)
+                if pk_count == 1:
+                    integer_pk_cols.add(col_name)
 
-    if not source_columns:
-        # Only INTEGER PRIMARY KEY columns - skip
-        target_con.close()
-        return 0
+        # Filter out INTEGER PRIMARY KEY from copy - SQLite will auto-assign new IDs
+        source_columns = [c for c in common_columns if c not in integer_pk_cols]
 
-    # Load rubric metadata for data-driven validation
-    # Roles are set only when 100% of sampled values match the pattern,
-    # If rubric was passed as parameter, use it; otherwise load from disk
+        if not source_columns:
+            # Only INTEGER PRIMARY KEY columns - skip
+            # ExitStack will close target_con automatically
+            return 0
 
-    if rubric_metadata is None:
-        # No rubric passed - try loading from disk if exemplar_schemas_dir provided
-        if exemplar_schemas_dir:
-            rubric_metadata = {}
-            for suffix in ["", "_combined"]:
-                # exemplar_schemas_dir is already schemas/{exemplar_name}/
-                # rubrics are at schemas/{exemplar_name}/{exemplar_name}.rubric.json
-                # Try finding the exemplar's main rubric
-                exemplar_name = exemplar_schemas_dir.name
-                rubric_path = exemplar_schemas_dir / f"{exemplar_name}{suffix}.rubric.json"
-                if rubric_path.exists():
-                    try:
-                        import json
+        # Load rubric metadata for data-driven validation
+        # Roles are set only when 100% of sampled values match the pattern,
+        # If rubric was passed as parameter, use it; otherwise load from disk
 
-                        with Path.open(rubric_path) as f:
-                            rubric_metadata = json.load(f)
-                        break
-                    except Exception as e:
-                        logger.debug(f"[DEBUG] Failed to load rubric {rubric_path}: {e}")
-        else:
-            rubric_metadata = {}
-
-    # Wrapper for module-level validation function (captures rubric_metadata and target_table)
-    def validate_row_types(vals: tuple, cols: list[str]) -> tuple[bool, str | None]:
-        return _validate_row_against_rubric(vals, cols, rubric_metadata, target_table)
-
-    # Build INSERT statement with properly quoted identifiers
-    target_columns = source_columns + ["data_source"]
-    quoted_target_cols = [quote_identifier(col) for col in target_columns]
-    placeholders = ", ".join(["?" for _ in target_columns])
-    insert_sql = f"INSERT OR IGNORE INTO {quote_identifier(target_table)} ({', '.join(quoted_target_cols)}) VALUES ({placeholders})"
-
-    # Read data from source table with properly quoted identifiers
-    # Try ORDER BY rowid for deterministic processing order (falls back for WITHOUT ROWID tables)
-    quoted_source_cols = [quote_identifier(col) for col in source_columns]
-    base_select_sql = f"SELECT {', '.join(quoted_source_cols)} FROM {quote_identifier(source_table)}"
-
-    # Fetch all rows first to handle STRICT table errors
-    # STRICT tables may raise errors when reading BLOB data from TEXT columns
-    rows_copied = 0
-    with readonly_connection(source_db) as source_con:
-        rows = None
-        # Try with ORDER BY rowid first (deterministic for regular tables)
-        try:
-            cursor = source_con.execute(f"{base_select_sql} ORDER BY rowid")
-            rows = cursor.fetchall()
-        except sqlite3.OperationalError as e:
-            if "no such column: rowid" in str(e).lower():
-                # WITHOUT ROWID table - fall back to unordered select
-                try:
-                    cursor = source_con.execute(base_select_sql)
-                    rows = cursor.fetchall()
-                except Exception:
-                    rows = None
-            # Other errors - try fallback below
-        except Exception:
-            rows = None
-
-        # If rows is still None, try rowid-by-rowid fallback for STRICT tables
-        if rows is None:
-            rows = []
-            try:
-                max_rowid = source_con.execute(f"SELECT MAX(rowid) FROM {quote_identifier(source_table)}").fetchone()[0]
-                if max_rowid:
-                    for rowid in range(1, max_rowid + 1):
+        if rubric_metadata is None:
+            # No rubric passed - try loading from disk if exemplar_schemas_dir provided
+            if exemplar_schemas_dir:
+                rubric_metadata = {}
+                for suffix in ["", "_combined"]:
+                    # exemplar_schemas_dir is already schemas/{exemplar_name}/
+                    # rubrics are at schemas/{exemplar_name}/{exemplar_name}.rubric.json
+                    # Try finding the exemplar's main rubric
+                    exemplar_name = exemplar_schemas_dir.name
+                    rubric_path = exemplar_schemas_dir / f"{exemplar_name}{suffix}.rubric.json"
+                    if rubric_path.exists():
                         try:
-                            row = source_con.execute(f"{base_select_sql} WHERE rowid = ?", (rowid,)).fetchone()
-                            if row:
-                                rows.append(row)
-                        except Exception:
-                            # Skip rows that can't be read (STRICT violations)
-                            continue
+                            import json
+
+                            with Path.open(rubric_path) as f:
+                                rubric_metadata = json.load(f)
+                            break
+                        except Exception as e:
+                            logger.debug(f"[DEBUG] Failed to load rubric {rubric_path}: {e}")
+            else:
+                rubric_metadata = {}
+
+        # Wrapper for module-level validation function (captures rubric_metadata and target_table)
+        def validate_row_types(vals: tuple, cols: list[str]) -> tuple[bool, str | None]:
+            return _validate_row_against_rubric(vals, cols, rubric_metadata, target_table)
+
+        # Build INSERT statement with properly quoted identifiers
+        target_columns = source_columns + ["data_source"]
+        quoted_target_cols = [quote_identifier(col) for col in target_columns]
+        placeholders = ", ".join(["?" for _ in target_columns])
+        insert_sql = f"INSERT OR IGNORE INTO {quote_identifier(target_table)} ({', '.join(quoted_target_cols)}) VALUES ({placeholders})"
+
+        # Read data from source table with properly quoted identifiers
+        # Try ORDER BY rowid for deterministic processing order (falls back for WITHOUT ROWID tables)
+        quoted_source_cols = [quote_identifier(col) for col in source_columns]
+        base_select_sql = f"SELECT {', '.join(quoted_source_cols)} FROM {quote_identifier(source_table)}"
+
+        # Fetch all rows first to handle STRICT table errors
+        # STRICT tables may raise errors when reading BLOB data from TEXT columns
+        rows_copied = 0
+        with readonly_connection(source_db) as source_con:
+            rows = None
+            # Try with ORDER BY rowid first (deterministic for regular tables)
+            try:
+                cursor = source_con.execute(f"{base_select_sql} ORDER BY rowid")
+                rows = cursor.fetchall()
+            except sqlite3.OperationalError as e:
+                if "no such column: rowid" in str(e).lower():
+                    # WITHOUT ROWID table - fall back to unordered select
+                    try:
+                        cursor = source_con.execute(base_select_sql)
+                        rows = cursor.fetchall()
+                    except Exception:
+                        rows = None
+                # Other errors - try fallback below
             except Exception:
-                # WITHOUT ROWID or other error - try without rowid filtering
+                rows = None
+
+            # If rows is still None, try rowid-by-rowid fallback for STRICT tables
+            if rows is None:
+                rows = []
                 try:
-                    cursor = source_con.execute(base_select_sql)
-                    rows = cursor.fetchall()
+                    max_rowid = source_con.execute(
+                        f"SELECT MAX(rowid) FROM {quote_identifier(source_table)}"
+                    ).fetchone()[0]
+                    if max_rowid:
+                        for rowid in range(1, max_rowid + 1):
+                            try:
+                                row = source_con.execute(f"{base_select_sql} WHERE rowid = ?", (rowid,)).fetchone()
+                                if row:
+                                    rows.append(row)
+                            except Exception:
+                                # Skip rows that can't be read (STRICT violations)
+                                continue
                 except Exception:
-                    rows = []
+                    # WITHOUT ROWID or other error - try without rowid filtering
+                    try:
+                        cursor = source_con.execute(base_select_sql)
+                        rows = cursor.fetchall()
+                    except Exception:
+                        rows = []
 
-    # Create rejected database to preserve all rejected rows
-    # Database path: target_db.parent/rejected/{name}_rejected.sqlite
-    # Example: catalog/Quarantine Events_admin/rejected/Quarantine Events_admin_rejected.sqlite
-    rejected_db_dir = target_db.parent / "rejected"
-    rejected_db_dir.mkdir(parents=True, exist_ok=True)
-    rejected_db_path = rejected_db_dir / f"{target_db.stem}_rejected{target_db.suffix}"
-    rejected_con = None
-    rejected_table_created = False
+        # Create rejected database to preserve all rejected rows
+        # Database path: target_db.parent/rejected/{name}_rejected.sqlite
+        # Example: catalog/Quarantine Events_admin/rejected/Quarantine Events_admin_rejected.sqlite
+        rejected_db_dir = target_db.parent / "rejected"
+        rejected_db_dir.mkdir(parents=True, exist_ok=True)
+        rejected_db_path = rejected_db_dir / f"{target_db.stem}_rejected{target_db.suffix}"
+        rejected_table_created = False
 
-    # Insert rows into target with rubric-based validation
-    rows_rejected = 0
-    rows_exception = 0  # Track rows lost to exceptions
-    rows_byteswap_corrected = 0  # Track rows with byte-swapped text corrections
-    rejection_reasons = []
-    for row in rows:
-        try:
-            # Reject completely NULL rows (no actual data)
-            if all(val is None for val in row):
-                rows_rejected += 1
-                if rows_rejected <= 5:
-                    rejection_reasons.append("all-NULL row (no data)")
+        # Insert rows into target with rubric-based validation
+        rows_rejected = 0
+        rows_exception = 0  # Track rows lost to exceptions
+        rows_byteswap_corrected = 0  # Track rows with byte-swapped text corrections
+        rejection_reasons = []
+        for row in rows:
+            try:
+                # Reject completely NULL rows (no actual data)
+                if all(val is None for val in row):
+                    rows_rejected += 1
+                    if rows_rejected <= 5:
+                        rejection_reasons.append("all-NULL row (no data)")
+                    continue
+
+                # Validate type affinity first (catch TEXT in INTEGER columns, etc.)
+                # This catches cases where .recover puts data in wrong tables
+                is_valid, rejection_reason = validate_column_type_affinity(row, source_columns, target_schema_rows)
+                if not is_valid:
+                    rows_rejected += 1
+                    if rows_rejected <= 5:
+                        rejection_reasons.append(rejection_reason)
+
+                    # Save rejected row to rejected database (lazy open, added to stack)
+                    if rejected_con is None:
+                        rejected_con = stack.enter_context(sqlite3.connect(rejected_db_path))
+
+                    rejected_columns = target_columns + ["rejection_reason"]
+
+                    if not rejected_table_created:
+                        rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
+                        cursor = target_con.execute(f"PRAGMA table_info({quote_identifier(target_table)})")
+                        target_schema = cursor.fetchall()
+                        col_defs = []
+                        for col_info in target_schema:
+                            col_name = col_info[1]
+                            col_type = col_info[2] or "BLOB"
+                            col_defs.append(f"{quote_identifier(col_name)} {col_type}")
+                        col_defs.append(f"{quote_identifier('rejection_reason')} TEXT")
+                        create_sql = (
+                            f"CREATE TABLE IF NOT EXISTS {quote_identifier(target_table)} ({', '.join(col_defs)})"
+                        )
+                        rejected_con.execute(create_sql)
+                        rejected_table_created = True
+
+                    row_with_source_and_reason = list(row) + [
+                        data_source_value,
+                        rejection_reason,
+                    ]
+                    rejected_placeholders = ", ".join(["?" for _ in rejected_columns])
+                    rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
+                    rejected_insert_sql = f"INSERT OR IGNORE INTO {quote_identifier(target_table)} ({', '.join(rejected_quoted_cols)}) VALUES ({rejected_placeholders})"
+                    rejected_con.execute(rejected_insert_sql, row_with_source_and_reason)
+
+                    continue
+
+                # Validate semantic roles (timestamps, UUIDs, etc.)
+                is_valid, rejection_reason = validate_row_types(row, source_columns)
+                if not is_valid:
+                    rows_rejected += 1
+                    # Collect first 5 rejection reasons for debugging
+                    if rows_rejected <= 5:
+                        rejection_reasons.append(rejection_reason)
+
+                    # Save rejected row to rejected database (lazy open, added to stack)
+                    if rejected_con is None:
+                        rejected_con = stack.enter_context(sqlite3.connect(rejected_db_path))
+
+                    # Define rejected_columns (used for both table creation and insertion)
+                    rejected_columns = target_columns + ["rejection_reason"]
+
+                    # Create rejected table structure on first rejection (includes rejection_reason column)
+                    if not rejected_table_created:
+                        # Copy table schema from target, add rejection_reason column
+                        rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
+
+                        # Get column definitions from target table
+                        cursor = target_con.execute(f"PRAGMA table_info({quote_identifier(target_table)})")
+                        target_schema = cursor.fetchall()
+
+                        # Build CREATE TABLE statement
+                        col_defs = []
+                        for col_info in target_schema:
+                            col_name = col_info[1]
+                            col_type = col_info[2] or "BLOB"
+                            col_defs.append(f"{quote_identifier(col_name)} {col_type}")
+
+                        # Add rejection_reason column
+                        col_defs.append(f"{quote_identifier('rejection_reason')} TEXT")
+
+                        create_sql = (
+                            f"CREATE TABLE IF NOT EXISTS {quote_identifier(target_table)} ({', '.join(col_defs)})"
+                        )
+                        rejected_con.execute(create_sql)
+                        rejected_table_created = True
+
+                    # Insert rejected row with rejection reason
+                    row_with_source_and_reason = list(row) + [
+                        data_source_value,
+                        rejection_reason,
+                    ]
+                    rejected_placeholders = ", ".join(["?" for _ in rejected_columns])
+                    rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
+                    rejected_insert_sql = f"INSERT OR IGNORE INTO {quote_identifier(target_table)} ({', '.join(rejected_quoted_cols)}) VALUES ({rejected_placeholders})"
+                    rejected_con.execute(rejected_insert_sql, row_with_source_and_reason)
+
+                    continue  # Skip this malformed row from main database
+
+                # Apply byte-swap correction for CJK text that's actually ASCII
+                corrected_row, num_corrections = fix_byteswapped_row(row)
+                if num_corrections > 0:
+                    rows_byteswap_corrected += 1
+                    row = corrected_row
+
+                row_with_source = list(row) + [data_source_value]
+                cursor_result = target_con.execute(insert_sql, row_with_source)
+                rows_copied += cursor_result.rowcount
+            except Exception as e:
+                # Skip rows that can't be inserted (constraint violations, etc.)
+                rows_exception += 1
+                if rows_exception <= 5:
+                    logger.debug(f"[DEBUG] Exception processing row in {target_table}: {e}")
                 continue
 
-            # Validate type affinity first (catch TEXT in INTEGER columns, etc.)
-            # This catches cases where .recover puts data in wrong tables
-            is_valid, rejection_reason = validate_column_type_affinity(row, source_columns, target_schema_rows)
-            if not is_valid:
-                rows_rejected += 1
-                if rows_rejected <= 5:
-                    rejection_reasons.append(rejection_reason)
+        if rows_exception > 0:
+            logger.debug(f"[DEBUG] Table {target_table}: {rows_exception} rows lost to exceptions")
+        if rows_byteswap_corrected > 0:
+            logger.debug(f"    ℹ {target_table}: corrected byte-swapped text in {rows_byteswap_corrected} rows")
 
-                # Save rejected row to rejected database
-                if not rejected_con:
-                    rejected_con = sqlite3.connect(rejected_db_path)
-
-                rejected_columns = target_columns + ["rejection_reason"]
-
-                if not rejected_table_created:
-                    rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
-                    cursor = target_con.execute(f"PRAGMA table_info({quote_identifier(target_table)})")
-                    target_schema = cursor.fetchall()
-                    col_defs = []
-                    for col_info in target_schema:
-                        col_name = col_info[1]
-                        col_type = col_info[2] or "BLOB"
-                        col_defs.append(f"{quote_identifier(col_name)} {col_type}")
-                    col_defs.append(f"{quote_identifier('rejection_reason')} TEXT")
-                    create_sql = f"CREATE TABLE IF NOT EXISTS {quote_identifier(target_table)} ({', '.join(col_defs)})"
-                    rejected_con.execute(create_sql)
-                    rejected_table_created = True
-
-                row_with_source_and_reason = list(row) + [
-                    data_source_value,
-                    rejection_reason,
-                ]
-                rejected_placeholders = ", ".join(["?" for _ in rejected_columns])
-                rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
-                rejected_insert_sql = f"INSERT OR IGNORE INTO {quote_identifier(target_table)} ({', '.join(rejected_quoted_cols)}) VALUES ({rejected_placeholders})"
-                rejected_con.execute(rejected_insert_sql, row_with_source_and_reason)
-
-                continue
-
-            # Validate semantic roles (timestamps, UUIDs, etc.)
-            is_valid, rejection_reason = validate_row_types(row, source_columns)
-            if not is_valid:
-                rows_rejected += 1
-                # Collect first 5 rejection reasons for debugging
-                if rows_rejected <= 5:
-                    rejection_reasons.append(rejection_reason)
-
-                # Save rejected row to rejected database
-                if not rejected_con:
-                    rejected_con = sqlite3.connect(rejected_db_path)
-
-                # Define rejected_columns (used for both table creation and insertion)
-                rejected_columns = target_columns + ["rejection_reason"]
-
-                # Create rejected table structure on first rejection (includes rejection_reason column)
-                if not rejected_table_created:
-                    # Copy table schema from target, add rejection_reason column
-                    rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
-
-                    # Get column definitions from target table
-                    cursor = target_con.execute(f"PRAGMA table_info({quote_identifier(target_table)})")
-                    target_schema = cursor.fetchall()
-
-                    # Build CREATE TABLE statement
-                    col_defs = []
-                    for col_info in target_schema:
-                        col_name = col_info[1]
-                        col_type = col_info[2] or "BLOB"
-                        col_defs.append(f"{quote_identifier(col_name)} {col_type}")
-
-                    # Add rejection_reason column
-                    col_defs.append(f"{quote_identifier('rejection_reason')} TEXT")
-
-                    create_sql = f"CREATE TABLE IF NOT EXISTS {quote_identifier(target_table)} ({', '.join(col_defs)})"
-                    rejected_con.execute(create_sql)
-                    rejected_table_created = True
-
-                # Insert rejected row with rejection reason
-                row_with_source_and_reason = list(row) + [
-                    data_source_value,
-                    rejection_reason,
-                ]
-                rejected_placeholders = ", ".join(["?" for _ in rejected_columns])
-                rejected_quoted_cols = [quote_identifier(col) for col in rejected_columns]
-                rejected_insert_sql = f"INSERT OR IGNORE INTO {quote_identifier(target_table)} ({', '.join(rejected_quoted_cols)}) VALUES ({rejected_placeholders})"
-                rejected_con.execute(rejected_insert_sql, row_with_source_and_reason)
-
-                continue  # Skip this malformed row from main database
-
-            # Apply byte-swap correction for CJK text that's actually ASCII
-            corrected_row, num_corrections = fix_byteswapped_row(row)
-            if num_corrections > 0:
-                rows_byteswap_corrected += 1
-                row = corrected_row
-
-            row_with_source = list(row) + [data_source_value]
-            cursor_result = target_con.execute(insert_sql, row_with_source)
-            rows_copied += cursor_result.rowcount
-        except Exception as e:
-            # Skip rows that can't be inserted (constraint violations, etc.)
-            rows_exception += 1
-            if rows_exception <= 5:
-                logger.debug(f"[DEBUG] Exception processing row in {target_table}: {e}")
-            continue
-
-    if rows_exception > 0:
-        logger.debug(f"[DEBUG] Table {target_table}: {rows_exception} rows lost to exceptions")
-    if rows_byteswap_corrected > 0:
-        logger.debug(f"    ℹ {target_table}: corrected byte-swapped text in {rows_byteswap_corrected} rows")
-
-    try:
+        # Commit and finalize before ExitStack closes connections
         target_con.commit()
 
         # Switch to DELETE mode to ensure data is in the main file
@@ -1125,14 +1133,13 @@ def copy_table_data_with_provenance(
         # Commit rejected database if any rejections occurred
         if rejected_con:
             rejected_con.commit()
-    finally:
-        # Always close connections to prevent file locks on Windows
-        target_con.close()
-        if rejected_con:
-            rejected_con.close()
+    # ExitStack automatically closes all connections here
 
     # Explicitly delete WAL files (Windows compatibility)
     cleanup_wal_files(target_db)
+
+    # Force garbage collection to release SQLite connections
+    gc.collect()
 
     return rows_copied
 
@@ -1165,6 +1172,9 @@ def deduplicate_table(db_path: Path, table_name: str) -> int:
 
     # Explicitly delete WAL files (Windows compatibility)
     cleanup_wal_files(db_path)
+
+    # Force garbage collection to release SQLite connections
+    gc.collect()
 
     return original_count - unique_count
 

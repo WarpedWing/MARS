@@ -180,7 +180,7 @@ class ReportModuleManager:
         results = []
 
         with create_standard_progress(
-            "Module",
+            "Report Modules",
             console=self.console,
             show_time="elapsed",
             show_percentage=False,
