@@ -327,6 +327,10 @@ def reconstruct_exemplar_database(
             except Exception as e:
                 logger.debug(f"[DEBUG] insert_lf_data_into_table failed for {table_name}: {e}")
 
+        # Periodic gc.collect() after each source database (not per-table)
+        # Prevents file handle exhaustion without per-table overhead
+        gc.collect()
+
     # Copy intact data from all source databases SECOND
     # This ensures that when deduplication runs, L&F rows (inserted first) have lower
     # ROWIDs and survive, preserving their found_* provenance
@@ -381,8 +385,20 @@ def reconstruct_exemplar_database(
                 )
                 total_intact_rows += rows
                 intact_rows_per_source[db_name] += rows
-            except Exception:
-                pass  # Table might not exist in this source
+            except sqlite3.OperationalError as e:
+                # Table might not exist in this source - expected for carved DBs
+                # But log resource errors (ERRNO 24) which indicate handle exhaustion
+                err_str = str(e).lower()
+                if "errno 24" in err_str or "too many open files" in err_str:
+                    logger.error(f"[RESOURCE] Handle exhaustion copying {table_name}: {e}")
+                # Other operational errors (no such table) are expected - don't log
+            except Exception as e:
+                # Unexpected errors should be logged for debugging
+                logger.debug(f"[DEBUG] Error copying {table_name} from {db_name}: {e}")
+
+        # Periodic gc.collect() after each source database (not per-table)
+        # Prevents file handle exhaustion on large databases like Powerlog
+        gc.collect()
 
     # Deduplicate ALL tables (both intact and LF data)
     # This is critical for cases like Powerlog where multiple archives contain overlapping intact data
@@ -408,8 +424,12 @@ def reconstruct_exemplar_database(
             if dupes > 0:
                 total_dupes += dupes
                 logger.debug(f"      Removed {dupes:,} duplicate rows from {table_name}")
-        except Exception:
-            pass
+        except sqlite3.OperationalError as e:
+            err_str = str(e).lower()
+            if "errno 24" in err_str or "too many open files" in err_str:
+                logger.error(f"[RESOURCE] Handle exhaustion deduplicating {table_name}: {e}")
+        except Exception as e:
+            logger.debug(f"[DEBUG] Error deduplicating {table_name}: {e}")
 
     # Reclaim space from deleted duplicate rows
     # Without VACUUM, deleted pages remain in the freelist causing database bloat

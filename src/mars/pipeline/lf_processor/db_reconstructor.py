@@ -821,8 +821,9 @@ def insert_lf_data_into_table(
     if rows_byteswap_corrected > 0:
         logger.debug(f"  L&F byte-swap corrections: {rows_byteswap_corrected} rows corrected in {target_table}")
 
-    # Force garbage collection to release SQLite connections
-    gc.collect()
+    # Per-table gc.collect() removed - now handled per-source-database in caller
+    # to reduce overhead while still preventing handle exhaustion
+    # gc.collect()
 
     return total_inserted
 
