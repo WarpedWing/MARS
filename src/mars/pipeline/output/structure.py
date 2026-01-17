@@ -21,7 +21,12 @@ from typing import Any
 from mars.config import MARSConfig, ProjectPaths
 from mars.utils.database_utils import copy_database_with_auxiliary_files
 from mars.utils.debug_logger import logger
-from mars.utils.file_utils import MKDIR_KWARGS, compute_md5_hash
+from mars.utils.file_utils import (
+    MKDIR_KWARGS,
+    FileTimestamps,
+    compute_md5_hash,
+    get_file_timestamps,
+)
 
 
 class OutputStructure:
@@ -672,6 +677,7 @@ class OutputStructure:
         preserve_structure: bool = False,
         base_dir: str | None = None,
         virtual_path: str | None = None,
+        file_timestamps: FileTimestamps | None = None,
     ) -> Path:
         """
         Copy a non-SQLite file to the logs directory.
@@ -687,6 +693,7 @@ class OutputStructure:
             preserve_structure: If True, preserve directory structure
             base_dir: Base directory string (e.g., "private/var/db/diagnostics")
             virtual_path: Original path in source image (e.g., "/private/var/db/diagnostics/Special/file.txt")
+            file_timestamps: Optional original file timestamps (if not provided, extracted from source_path)
 
         Returns:
             Path to copied file
@@ -756,6 +763,10 @@ class OutputStructure:
         if dest_path == original_dest and dest_path.exists():
             return dest_path
 
+        # Get original file timestamps before copy (if not provided)
+        if file_timestamps is None:
+            file_timestamps = get_file_timestamps(source_path)
+
         # For non-database files, use simple copy (no auxiliary files)
         shutil.copy2(source_path, dest_path)
 
@@ -769,7 +780,10 @@ class OutputStructure:
                     "original_filename": original_filename,
                     "source_path": str(source_path),
                     "copied_to": str(dest_path),
-                    "timestamp": datetime.now(UTC).isoformat(),
+                    # Original file timestamps (from source, not MARS processing time)
+                    **file_timestamps.to_dict(),
+                    # MARS processing timestamp
+                    "processed_at": datetime.now(UTC).isoformat(),
                 }
             )
         # Note: Metadata saved at end of scan to avoid race conditions
@@ -783,6 +797,7 @@ class OutputStructure:
         folder_name: str | None = None,
         subfolder: str | None = None,
         profile_subfolder: str | None = None,  # Accepted for API compatibility
+        file_timestamps: FileTimestamps | None = None,
     ) -> Path:
         """
         Copy a cache file to the caches directory.
@@ -795,6 +810,7 @@ class OutputStructure:
             original_filename: Optional override for original filename
             folder_name: Optional folder name to use (defaults to original_filename stem)
             subfolder: Optional subfolder within the caches folder
+            file_timestamps: Optional original file timestamps (if not provided, extracted from source_path)
 
         Returns:
             Path to copied cache file
@@ -823,6 +839,10 @@ class OutputStructure:
         if dest_path == original_dest and dest_path.exists():
             return dest_path
 
+        # Get original file timestamps before copy (if not provided)
+        if file_timestamps is None:
+            file_timestamps = get_file_timestamps(source_path)
+
         # For cache files, use simple copy (no auxiliary files)
         shutil.copy2(source_path, dest_path)
 
@@ -836,7 +856,10 @@ class OutputStructure:
                     "original_filename": original_filename,
                     "source_path": str(source_path),
                     "copied_to": str(dest_path),
-                    "timestamp": datetime.now(UTC).isoformat(),
+                    # Original file timestamps (from source, not MARS processing time)
+                    **file_timestamps.to_dict(),
+                    # MARS processing timestamp
+                    "processed_at": datetime.now(UTC).isoformat(),
                 }
             )
         # Note: Metadata saved at end of scan to avoid race conditions
@@ -850,6 +873,7 @@ class OutputStructure:
         folder_name: str | None = None,
         subfolder: str | None = None,
         profile_subfolder: str | None = None,  # Accepted for API compatibility
+        file_timestamps: FileTimestamps | None = None,
     ) -> Path:
         """
         Copy a keychain file to the keychains directory.
@@ -862,6 +886,7 @@ class OutputStructure:
             original_filename: Optional override for original filename
             folder_name: Optional folder name to use (defaults to original_filename stem)
             subfolder: Optional subfolder within the keychains folder
+            file_timestamps: Optional original file timestamps (if not provided, extracted from source_path)
 
         Returns:
             Path to copied keychain file
@@ -890,6 +915,10 @@ class OutputStructure:
         if dest_path == original_dest and dest_path.exists():
             return dest_path
 
+        # Get original file timestamps before copy (if not provided)
+        if file_timestamps is None:
+            file_timestamps = get_file_timestamps(source_path)
+
         # For keychain files, use simple copy (no auxiliary files)
         shutil.copy2(source_path, dest_path)
 
@@ -903,7 +932,10 @@ class OutputStructure:
                     "original_filename": original_filename,
                     "source_path": str(source_path),
                     "copied_to": str(dest_path),
-                    "timestamp": datetime.now(UTC).isoformat(),
+                    # Original file timestamps (from source, not MARS processing time)
+                    **file_timestamps.to_dict(),
+                    # MARS processing timestamp
+                    "processed_at": datetime.now(UTC).isoformat(),
                 }
             )
         # Note: Metadata saved at end of scan to avoid race conditions

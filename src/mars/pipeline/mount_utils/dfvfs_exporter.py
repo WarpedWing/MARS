@@ -28,13 +28,22 @@ if TYPE_CHECKING:
 
 @dataclass
 class ExportRecord:
+    """
+    Record of a file exported from a forensic image via dfVFS.
+
+    Timestamp fields are the ORIGINAL file timestamps from the forensic image,
+    not when MARS processed them.
+    """
+
     virtual_path: str
     export_path: Path
     target_name: str
     md5: str
     size: int
-    created_time: datetime | None
-    modified_time: datetime | None
+    # Original file timestamps from forensic image (not MARS processing time)
+    file_created: datetime | None
+    file_modified: datetime | None
+    file_accessed: datetime | None
 
 
 class DFVFSExporter:
@@ -630,6 +639,7 @@ class DFVFSExporter:
         size = getattr(file_entry, "size", dest_path.stat().st_size)
         created = _get_dfvfs_time(file_entry, "creation")
         modified = _get_dfvfs_time(file_entry, "modification")
+        accessed = _get_dfvfs_time(file_entry, "access")
 
         return ExportRecord(
             virtual_path=virtual_path,
@@ -637,8 +647,9 @@ class DFVFSExporter:
             target_name=target_name,
             md5=md5.hexdigest(),
             size=size,
-            created_time=created,
-            modified_time=modified,
+            file_created=created,
+            file_modified=modified,
+            file_accessed=accessed,
         )
 
 
@@ -699,6 +710,7 @@ def _get_dfvfs_time(file_entry, attribute: str) -> datetime | None:
     mapping = {
         "creation": "creation_time",
         "modification": "modification_time",
+        "access": "access_time",
     }
     attr = mapping.get(attribute)
     if not attr:

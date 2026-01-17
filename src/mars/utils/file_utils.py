@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from mars.utils.debug_logger import logger
@@ -148,3 +150,123 @@ def append_jsonl(path: Path, record: dict) -> None:
     """
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
+
+
+# ============================================================================
+# File Timestamp Utilities
+# ============================================================================
+
+
+@dataclass
+class FileTimestamps:
+    """
+    Original file timestamps with forensic significance.
+
+    These timestamps come from the filesystem metadata of the original file,
+    NOT when MARS processed the file. Important for forensic traceability.
+
+    Attributes:
+        file_created: File creation time (st_birthtime on macOS, st_ctime fallback)
+        file_modified: File modification time (st_mtime)
+        file_accessed: File access time (st_atime)
+    """
+
+    file_created: datetime | None
+    file_modified: datetime | None
+    file_accessed: datetime | None
+
+    def to_dict(self) -> dict[str, str | None]:
+        """Convert to dictionary with ISO format strings for JSON serialization."""
+        return {
+            "file_created": self.file_created.isoformat() if self.file_created else None,
+            "file_modified": self.file_modified.isoformat() if self.file_modified else None,
+            "file_accessed": self.file_accessed.isoformat() if self.file_accessed else None,
+        }
+
+
+def get_file_timestamps(path: Path) -> FileTimestamps:
+    """
+    Extract original file timestamps from a file path.
+
+    Args:
+        path: Path to the file
+
+    Returns:
+        FileTimestamps with created, modified, and accessed times (UTC).
+        Returns None for individual timestamps if file is inaccessible.
+
+    Note:
+        - file_created uses st_birthtime on macOS (true creation time),
+          falls back to st_ctime on Linux (inode change time)
+        - All times are converted to UTC for consistency
+        - If file cannot be accessed, returns FileTimestamps with all None values
+
+    Example:
+        >>> from pathlib import Path
+        >>> timestamps = get_file_timestamps(Path("/path/to/file.db"))
+        >>> print(timestamps.file_modified.isoformat())
+        '2025-01-15T10:30:00+00:00'
+    """
+    try:
+        stat = path.stat()
+
+        # st_birthtime is macOS-specific (true file creation time)
+        # Falls back to st_ctime on Linux (inode change time, not ideal but best available)
+        birth_ts = getattr(stat, "st_birthtime", stat.st_ctime)
+        file_created = datetime.fromtimestamp(birth_ts, UTC)
+
+        file_modified = datetime.fromtimestamp(stat.st_mtime, UTC)
+        file_accessed = datetime.fromtimestamp(stat.st_atime, UTC)
+
+        return FileTimestamps(
+            file_created=file_created,
+            file_modified=file_modified,
+            file_accessed=file_accessed,
+        )
+    except (OSError, PermissionError):
+        return FileTimestamps(
+            file_created=None,
+            file_modified=None,
+            file_accessed=None,
+        )
+
+
+def migrate_provenance_fields(provenance: dict) -> dict:
+    """
+    Migrate old provenance field names to new naming convention.
+
+    This provides backward compatibility when loading provenance files
+    created before the timestamp field renaming.
+
+    Old → New field mappings:
+        - created_time → file_created
+        - modified_time → file_modified
+        - timestamp → processed_at (MARS processing time)
+
+    Args:
+        provenance: Provenance dictionary (modified in place)
+
+    Returns:
+        The same dictionary with migrated field names
+
+    Example:
+        >>> from pathlib import Path
+        >>> import json
+        >>> with Path("file.provenance.json").open() as f:
+        ...     prov = json.load(f)
+        >>> prov = migrate_provenance_fields(prov)
+    """
+    # Migrate created_time → file_created
+    if "created_time" in provenance and "file_created" not in provenance:
+        provenance["file_created"] = provenance.pop("created_time")
+
+    # Migrate modified_time → file_modified
+    if "modified_time" in provenance and "file_modified" not in provenance:
+        provenance["file_modified"] = provenance.pop("modified_time")
+
+    # Migrate timestamp → processed_at (only if it represents MARS processing time)
+    # Note: Some old files may have "timestamp" as the MARS processing time
+    if "timestamp" in provenance and "processed_at" not in provenance:
+        provenance["processed_at"] = provenance.pop("timestamp")
+
+    return provenance

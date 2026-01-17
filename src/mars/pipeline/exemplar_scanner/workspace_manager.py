@@ -118,8 +118,9 @@ def decompress_workspace_archives(
                                     target_name=record.target_name,
                                     md5=md5_hash.hexdigest(),
                                     size=extracted_path.stat().st_size,
-                                    created_time=record.created_time,
-                                    modified_time=record.modified_time,
+                                    file_created=record.file_created,
+                                    file_modified=record.file_modified,
+                                    file_accessed=record.file_accessed,
                                 )
                                 new_manifest_entries[extracted_path] = extracted_record
                             break
@@ -199,8 +200,9 @@ def decompress_workspace_archives(
                             target_name=record.target_name,
                             md5=md5_hash.hexdigest(),
                             size=decompressed_file.stat().st_size,
-                            created_time=record.created_time,
-                            modified_time=record.modified_time,
+                            file_created=record.file_created,
+                            file_modified=record.file_modified,
+                            file_accessed=record.file_accessed,
                         )
                         # Collect for return
                         new_manifest_entries[decompressed_file] = decompressed_record

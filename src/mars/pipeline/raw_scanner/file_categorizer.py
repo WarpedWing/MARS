@@ -75,6 +75,10 @@ class RecoveredFile:
         last_timestamp: str | None = None,
         decompressed_path: Path | None = None,
         reasons: list[str] | None = None,
+        # Original file timestamps (from source, not MARS processing time)
+        file_created: datetime | None = None,
+        file_modified: datetime | None = None,
+        file_accessed: datetime | None = None,
     ):
         self.source_path = source_path
         self.file_type = file_type
@@ -85,6 +89,10 @@ class RecoveredFile:
         self.last_timestamp = last_timestamp
         self.decompressed_path = decompressed_path
         self.reasons = reasons or []
+        # Original file timestamps
+        self.file_created = file_created
+        self.file_modified = file_modified
+        self.file_accessed = file_accessed
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -98,6 +106,10 @@ class RecoveredFile:
             "last_timestamp": self.last_timestamp,
             "decompressed_path": (str(self.decompressed_path) if self.decompressed_path else None),
             "reasons": self.reasons,
+            # Original file timestamps (from source, not MARS processing time)
+            "file_created": self.file_created.isoformat() if self.file_created else None,
+            "file_modified": self.file_modified.isoformat() if self.file_modified else None,
+            "file_accessed": self.file_accessed.isoformat() if self.file_accessed else None,
         }
 
 
@@ -155,7 +167,15 @@ class FileCategorizer:
             RecoveredFile object or None if classification failed
         """
         try:
-            size = file_path.stat().st_size
+            # Get file stats once for size and timestamps
+            file_stat = file_path.stat()
+            size = file_stat.st_size
+
+            # Capture original file timestamps (from source, not MARS processing time)
+            birth_ts = getattr(file_stat, "st_birthtime", file_stat.st_ctime)
+            file_created = datetime.fromtimestamp(birth_ts, UTC)
+            file_modified = datetime.fromtimestamp(file_stat.st_mtime, UTC)
+            file_accessed = datetime.fromtimestamp(file_stat.st_atime, UTC)
 
             # Check file extension to determine type
             file_lower = file_path.name.lower()
@@ -171,6 +191,9 @@ class FileCategorizer:
                     size=size,
                     md5=md5,
                     reasons=["SQLite extension detected"],
+                    file_created=file_created,
+                    file_modified=file_modified,
+                    file_accessed=file_accessed,
                 )
 
             # Fast-path: .jsonlz4 files - trust extension, skip header check
@@ -183,6 +206,9 @@ class FileCategorizer:
                     size=size,
                     md5=md5,
                     reasons=["JSONLZ4 extension detected"],
+                    file_created=file_created,
+                    file_modified=file_modified,
+                    file_accessed=file_accessed,
                 )
 
             # Skip .html.gz files (too numerous and not useful)
@@ -212,7 +238,9 @@ class FileCategorizer:
                     return None
 
                 # Classify and handle the decompressed content
-                return self._handle_compressed_file(file_path, decompressed_header, compression_type, size)
+                return self._handle_compressed_file(
+                    file_path, decompressed_header, compression_type, size, file_created, file_modified, file_accessed
+                )
 
             # Read file header once for all checks
             with Path.open(file_path, "rb") as f:
@@ -232,7 +260,9 @@ class FileCategorizer:
                     self.processor.stats["archives_failed"] = self.processor.stats.get("archives_failed", 0) + 1
                     return None
 
-                return self._handle_compressed_file(file_path, decompressed_header, compression_type, size)
+                return self._handle_compressed_file(
+                    file_path, decompressed_header, compression_type, size, file_created, file_modified, file_accessed
+                )
 
             # Check for SQLite magic
             if header.startswith(SQLITE_MAGIC):
@@ -244,6 +274,9 @@ class FileCategorizer:
                     size=size,
                     md5=md5,
                     reasons=["SQLite magic bytes detected"],
+                    file_created=file_created,
+                    file_modified=file_modified,
+                    file_accessed=file_accessed,
                 )
 
             # Try text log fingerprinting (pass pre-read header to avoid re-reading)
@@ -264,6 +297,9 @@ class FileCategorizer:
                 first_timestamp=result.first_timestamp,
                 last_timestamp=result.last_timestamp,
                 reasons=result.reasons,
+                file_created=file_created,
+                file_modified=file_modified,
+                file_accessed=file_accessed,
             )
 
         except Exception as e:
@@ -284,6 +320,9 @@ class FileCategorizer:
         decompressed_header: bytes,
         compression_type: str,
         original_size: int,
+        file_created: datetime,
+        file_modified: datetime,
+        file_accessed: datetime,
     ) -> RecoveredFile | None:
         """
         Handle a compressed file by classifying its decompressed contents.
@@ -296,6 +335,9 @@ class FileCategorizer:
             decompressed_header: First 8KB of decompressed content
             compression_type: "gzip" or "bzip2"
             original_size: Size of compressed file
+            file_created: Original file creation timestamp
+            file_modified: Original file modification timestamp
+            file_accessed: Original file access timestamp
 
         Returns:
             RecoveredFile for the decompressed content, or None if not useful
@@ -526,6 +568,9 @@ class FileCategorizer:
                 md5=None,
                 decompressed_path=dest_path,
                 reasons=reasons,
+                file_created=file_created,
+                file_modified=file_modified,
+                file_accessed=file_accessed,
             )
 
         except Exception as e:

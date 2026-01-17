@@ -35,7 +35,7 @@ from mars.utils.database_utils import (
     is_sqlite_database,
 )
 from mars.utils.debug_logger import logger
-from mars.utils.file_utils import MKDIR_KWARGS
+from mars.utils.file_utils import MKDIR_KWARGS, migrate_provenance_fields
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -238,12 +238,16 @@ class ExemplarCataloger:
                 try:
                     with source_prov_file.open("r") as f:
                         source_prov = json.load(f)
+                    source_prov = migrate_provenance_fields(source_prov)
                     source_provenances.append(
                         {
                             **base_fields,
                             "original_source": source_prov.get("source_path"),
                             "md5": source_prov.get("md5"),
                             "file_size": source_prov.get("file_size"),
+                            "file_created": source_prov.get("file_created"),
+                            "file_modified": source_prov.get("file_modified"),
+                            "file_accessed": source_prov.get("file_accessed"),
                         }
                     )
                 except Exception:
@@ -285,7 +289,7 @@ class ExemplarCataloger:
         base_provenance = {
             "name": name,
             "operation": operation,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "processed_at": datetime.now(UTC).isoformat(),
             "combined_filename": output_db.name,
             "combined_location": str(output_db.relative_to(self.output.root)),
             "source_count": source_count,
@@ -720,11 +724,12 @@ class ExemplarCataloger:
                 try:
                     with source_provenance.open("r") as f:
                         provenance_data = json.load(f)
+                    provenance_data = migrate_provenance_fields(provenance_data)
 
                     # Create history entry
                     history_entry = {
                         "operation": "move_to_catalog_profile",
-                        "timestamp": datetime.now(UTC).isoformat(),
+                        "processed_at": datetime.now(UTC).isoformat(),
                         "original_filename": db_file.name,
                         "new_filename": output_db.name,
                         "original_location": str(db_file.relative_to(self.output.root)),
@@ -755,6 +760,9 @@ class ExemplarCataloger:
                             "original_source": provenance_data.get("source_path"),
                             "md5": provenance_data.get("md5"),
                             "file_size": provenance_data.get("file_size"),
+                            "file_created": provenance_data.get("file_created"),
+                            "file_modified": provenance_data.get("file_modified"),
+                            "file_accessed": provenance_data.get("file_accessed"),
                         }
                     )
 
@@ -829,7 +837,7 @@ class ExemplarCataloger:
                 "name": version_name,
                 "base_name": base_name,
                 "operation": "multi_profile_catalog",
-                "timestamp": datetime.now(UTC).isoformat(),
+                "processed_at": datetime.now(UTC).isoformat(),
                 "profile_count": len(profile_dbs),
                 "profiles": profile_names,
                 "source_databases": source_provenances,
@@ -1146,11 +1154,12 @@ class ExemplarCataloger:
                             # Read original provenance
                             with source_provenance.open("r") as f:
                                 provenance_data = json.load(f)
+                            provenance_data = migrate_provenance_fields(provenance_data)
 
                             # Create history entry to track the rename/move
                             history_entry = {
                                 "operation": "move_to_catalog",
-                                "timestamp": datetime.now(UTC).isoformat(),
+                                "processed_at": datetime.now(UTC).isoformat(),
                                 "original_filename": source_db.name,
                                 "new_filename": output_db.name,
                                 "original_location": str(source_db.relative_to(self.output.root)),

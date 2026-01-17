@@ -349,6 +349,17 @@ def _process_single_database(
     This function is thread-safe and can be called concurrently.
     """
     try:
+        # Capture original file timestamps before any processing
+        from datetime import UTC, datetime
+
+        file_stat = case_path.stat()
+        birth_ts = getattr(file_stat, "st_birthtime", file_stat.st_ctime)
+        file_timestamps = {
+            "file_created": datetime.fromtimestamp(birth_ts, UTC).isoformat(),
+            "file_modified": datetime.fromtimestamp(file_stat.st_mtime, UTC).isoformat(),
+            "file_accessed": datetime.fromtimestamp(file_stat.st_atime, UTC).isoformat(),
+        }
+
         best, variants, saved_paths = introspect_with_repairs(
             case_path,
             ignore_tables,
@@ -538,6 +549,7 @@ def _process_single_database(
             dissect_rebuilt=dissect_rebuilt,
             dissect_rebuilt_path=dissect_rebuilt_path,
             nearest=nearest,
+            file_timestamps=file_timestamps,
         )
 
         if empty_bool and best.tag == "O":

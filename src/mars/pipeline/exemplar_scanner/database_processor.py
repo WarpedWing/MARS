@@ -314,16 +314,25 @@ class DatabaseProcessor:
 
         file_stat = db_path.stat()
         file_size = export_meta.size if export_meta else file_stat.st_size
-        if export_meta and export_meta.created_time:
-            created_time = export_meta.created_time
+
+        # Extract ORIGINAL file timestamps (not MARS processing time)
+        # Use dfVFS metadata when available, fallback to os.stat
+        if export_meta and export_meta.file_created:
+            file_created = export_meta.file_created
         else:
             birth_ts = getattr(file_stat, "st_birthtime", file_stat.st_ctime)
-            created_time = datetime.fromtimestamp(birth_ts, UTC)
+            file_created = datetime.fromtimestamp(birth_ts, UTC)
 
-        if export_meta and export_meta.modified_time:
-            modified_time = export_meta.modified_time
+        if export_meta and export_meta.file_modified:
+            file_modified = export_meta.file_modified
         else:
-            modified_time = datetime.fromtimestamp(file_stat.st_mtime, UTC)
+            file_modified = datetime.fromtimestamp(file_stat.st_mtime, UTC)
+
+        if export_meta and export_meta.file_accessed:
+            file_accessed = export_meta.file_accessed
+        else:
+            file_accessed = datetime.fromtimestamp(file_stat.st_atime, UTC)
+
         source_virtual_path = export_meta.virtual_path if export_meta else str(db_path)
         relative_virtual_path = (
             export_meta.virtual_path.lstrip("/") if export_meta else str(db_path.relative_to(self.source_path))
@@ -337,8 +346,12 @@ class DatabaseProcessor:
             "relative_path": relative_virtual_path,
             "md5": md5_hash,
             "file_size": file_size,
-            "created_time": created_time.isoformat(),
-            "modified_time": modified_time.isoformat(),
+            # Original file timestamps (from source, not MARS processing time)
+            "file_created": file_created.isoformat(),
+            "file_modified": file_modified.isoformat(),
+            "file_accessed": file_accessed.isoformat(),
+            # MARS processing timestamp
+            "processed_at": datetime.now(UTC).isoformat(),
             "description": db_def.get("description", ""),
             "username": username,  # macOS username (if user-scope)
             "browser_profile": browser_profile,  # Browser profile name (Default, Profile 1, etc.)

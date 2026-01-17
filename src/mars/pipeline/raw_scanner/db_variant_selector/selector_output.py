@@ -287,6 +287,7 @@ def build_case_record(
     dissect_rebuilt_path: str | None,
     nearest: Sequence[Mapping[str, Any]] | None = None,
     verbosity: VerbosityLevel | None = None,
+    file_timestamps: Mapping[str, str | None] | None = None,
 ) -> dict[str, Any]:
     case = best.meta
     lf_tables = sorted(set(lf_tables_from_recover))
@@ -349,6 +350,8 @@ def build_case_record(
     record = {
         "type": "case",
         "case_path": case_path.as_posix(),
+        # Original file timestamps (from source, not MARS processing time)
+        "file_timestamps": file_timestamps or {},
         "chosen_variant": chosen_variant,
         "variant_chosen": best.tag,
         "decision": {
