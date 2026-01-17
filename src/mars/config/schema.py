@@ -606,10 +606,10 @@ class CarverConfig:
     """Enable page clustering optimization (internal)"""
 
     # Expert-level options (not user-configurable via UI)
-    parallel_processing: bool = field(default=False, metadata={"user_configurable": False})
+    parallel_processing: bool = field(default=True, metadata={"user_configurable": False})
     """Enable parallel page processing (expert option)"""
 
-    parallel_threshold: int = field(default=100, metadata={"user_configurable": False})
+    parallel_threshold: int = field(default=10, metadata={"user_configurable": False})
     """Minimum pages required for parallel processing (expert option)"""
 
     max_workers: int | None = field(default=None, metadata={"user_configurable": False})

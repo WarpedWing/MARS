@@ -182,6 +182,17 @@ class LFOrchestrator:
         )
         from mars.utils.database_utils import get_chosen_variant_path
 
+        # Extract rubric generation params from config (used by multiple phases)
+        # These control how timestamps/roles are detected in LF rubric generation
+        rubric_params = {}
+        if self.config:
+            rubric_params = {
+                "min_timestamp_rows": self.config.exemplar.min_timestamp_rows,
+                "min_role_sample_size": self.config.exemplar.min_role_sample_size,
+                "min_year": int(self.config.exemplar.epoch_min[:4]),
+                "max_year": int(self.config.exemplar.epoch_max[:4]),
+            }
+
         # Create unified progress for all 7 phases
         with create_standard_progress(
             label="",
@@ -363,6 +374,7 @@ class LFOrchestrator:
                             db_info["source_db"],
                             db_name,
                             self.paths.db_selected_variants.parent,
+                            **rubric_params,
                         )
                         db_info["self_rubric"] = self_rubric
                         if self_rubric:
@@ -404,6 +416,7 @@ class LFOrchestrator:
                             lf_temp_dir=lf_temp_dir,
                             exemplar_db_dir=self.exemplar_db_dir,
                             progress_context=ctx,
+                            **rubric_params,
                         )
                         metamatch_results[group_id] = result
 
@@ -466,6 +479,7 @@ class LFOrchestrator:
                 catalog_groups=groups["catalog_groups"],
                 prep_lookup=prep_lookup,
                 exemplar_db_dir=self.exemplar_db_dir,
+                **rubric_params,
             )
 
             # Create catalog output databases with progress tracking
@@ -482,6 +496,7 @@ class LFOrchestrator:
                     progress_context=ctx,
                     phase_sub_task=phase4_sub,
                     consumed_lf_tables=consumed_lf_tables,
+                    **rubric_params,
                 )
 
                 ctx.remove_sub(phase4_sub)
@@ -491,6 +506,10 @@ class LFOrchestrator:
                     databases_dir=databases_dir,
                     exemplar_db_dir=self.exemplar_db_dir,
                     consumed_lf_tables=consumed_lf_tables,
+                    min_timestamp_rows=rubric_params.get("min_timestamp_rows", 1),
+                    min_role_sample_size=rubric_params.get("min_role_sample_size", 5),
+                    min_year=rubric_params.get("min_year", 2000),
+                    max_year=rubric_params.get("max_year", 2038),
                 )
 
             ctx.update_main("Phase 4/7: Complete", phase=4)
@@ -512,6 +531,7 @@ class LFOrchestrator:
                 individual_databases=groups["individual"],
                 prep_lookup=prep_lookup,
                 exemplar_db_dir=self.exemplar_db_dir,
+                **rubric_params,
             )
 
             # Create found_data output databases with progress tracking
@@ -528,6 +548,7 @@ class LFOrchestrator:
                     progress_context=ctx,
                     phase_sub_task=phase5_sub,
                     consumed_lf_tables=consumed_lf_tables,
+                    **rubric_params,
                 )
 
                 ctx.remove_sub(phase5_sub)
@@ -537,6 +558,10 @@ class LFOrchestrator:
                     databases_dir=databases_dir,
                     exemplar_db_dir=self.exemplar_db_dir,
                     consumed_lf_tables=consumed_lf_tables,
+                    min_timestamp_rows=rubric_params.get("min_timestamp_rows", 1),
+                    min_role_sample_size=rubric_params.get("min_role_sample_size", 5),
+                    min_year=rubric_params.get("min_year", 2000),
+                    max_year=rubric_params.get("max_year", 2038),
                 )
 
             ctx.update_main("Phase 5/7: Complete", phase=5)

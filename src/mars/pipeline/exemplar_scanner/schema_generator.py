@@ -98,6 +98,9 @@ def generate_schema_and_rubric(
     output_dir: Path,
     base_name: str,
     min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> tuple[Path, Path]:
     """Generate schema CSV and rubric JSON for a database.
 
@@ -106,6 +109,9 @@ def generate_schema_and_rubric(
         output_dir: Output directory for schema/rubric
         base_name: Base name for output files
         min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         Tuple of (schema_path, rubric_path)
@@ -135,7 +141,15 @@ def generate_schema_and_rubric(
         # Generate rubric JSON using unified rubric generator
         # This includes all improvements: UUID detection, timestamp format,
         # signature patterns, FK inference, example confidence, etc.
-        rubric = generate_rubric(conn, tables, rubric_name=schema_name, min_timestamp_rows=min_timestamp_rows)
+        rubric = generate_rubric(
+            conn,
+            tables,
+            rubric_name=schema_name,
+            min_timestamp_rows=min_timestamp_rows,
+            min_role_sample_size=min_role_sample_size,
+            min_year=min_year,
+            max_year=max_year,
+        )
 
         # Add source_db to metadata
         rubric["source_db"] = str(db_path)

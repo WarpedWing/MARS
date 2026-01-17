@@ -133,6 +133,9 @@ def generate_rubric(
     tables: list[tuple],
     rubric_name: str = "database",
     min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> dict:
     """
     Generate rubric dictionary for a database.
@@ -144,6 +147,9 @@ def generate_rubric(
         tables: List of (table_name, sql) tuples from fetch_tables()
         rubric_name: Name to use in metadata
         min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         Rubric dictionary ready to be serialized to JSON
@@ -210,6 +216,9 @@ def generate_rubric(
             infer_fks=True,
             check_fk_data=True,  # Exemplar DBs are clean, can afford data validation
             min_timestamp_rows=min_timestamp_rows,
+            min_role_sample_size=min_role_sample_size,
+            min_year=min_year,
+            max_year=max_year,
         )
 
         # Check if table was skipped (virtual table with unavailable module)

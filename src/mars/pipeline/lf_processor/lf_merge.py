@@ -147,6 +147,10 @@ def process_metamatch_group(
     lf_temp_dir: Path,
     exemplar_db_dir: Path | None = None,
     progress_context: ProgressContextType | None = None,  # Hierarchical progress context
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> dict:
     """
     Process a metamatch group: combine DBs, generate superrubric, match LF.
@@ -160,6 +164,10 @@ def process_metamatch_group(
         exemplar_db_dir: Optional exemplar directory for rubric metadata
         progress_context: Optional LFProgressContext for hierarchical progress tracking.
             Parent caller (orchestrator) manages the group-level progress bar.
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         Dict with processing results and statistics
@@ -207,7 +215,15 @@ def process_metamatch_group(
     try:
         with readonly_connection(combined_db) as con:
             all_tables = fetch_tables(con)
-            superrubric = generate_rubric(con, all_tables, rubric_name=group_label)
+            superrubric = generate_rubric(
+                con,
+                all_tables,
+                rubric_name=group_label,
+                min_timestamp_rows=min_timestamp_rows,
+                min_role_sample_size=min_role_sample_size,
+                min_year=min_year,
+                max_year=max_year,
+            )
 
         # Save superrubric to databases/schemas/{group_label}/
         schemas_dir = databases_dir / "schemas" / group_label
@@ -245,6 +261,10 @@ def process_metamatch_group(
             exact_match_name=None,
             nearest_exemplar_names=None,
             per_db_ignorable_tables=None,
+            min_timestamp_rows=min_timestamp_rows,
+            min_role_sample_size=min_role_sample_size,
+            min_year=min_year,
+            max_year=max_year,
         )
 
         # Store matches keyed by source database

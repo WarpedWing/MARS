@@ -392,8 +392,21 @@ class FreeMatchUI:
         dest_db = db_catalog_dir / db_path.name
         shutil.copy2(db_path, dest_db)
 
+        # Get config values for rubric generation
+        config = MARSConfig()
+        min_year = int(config.exemplar.epoch_min[:4])
+        max_year = int(config.exemplar.epoch_max[:4])
+
         # Generate schema and rubric in schemas directory
-        schema_path, rubric_path = generate_schema_and_rubric(dest_db, db_schema_dir, db_name)
+        schema_path, rubric_path = generate_schema_and_rubric(
+            dest_db,
+            db_schema_dir,
+            db_name,
+            min_timestamp_rows=config.exemplar.min_timestamp_rows,
+            min_role_sample_size=config.exemplar.min_role_sample_size,
+            min_year=min_year,
+            max_year=max_year,
+        )
 
         # Get fingerprint
         fingerprint = get_schema_fingerprint(dest_db)

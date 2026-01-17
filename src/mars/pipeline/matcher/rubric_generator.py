@@ -407,6 +407,8 @@ def detect_timestamp_role(
     is_pk: bool,
     has_pk_in_name: bool,
     min_sample_size: int = MIN_ROLE_SAMPLE_SIZE,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> tuple[bool, str | None, bool]:
     """
     Detect if column contains timestamps and identify format.
@@ -423,6 +425,8 @@ def detect_timestamp_role(
         is_pk: Is this a primary key column?
         has_pk_in_name: Does column name contain "PK"?
         min_sample_size: Minimum sample size for role detection (default from config)
+        min_year: Minimum plausible year for timestamps (from config)
+        max_year: Maximum plausible year for timestamps (from config)
 
     Returns:
         (is_timestamp, format_name, is_nullable) tuple where:
@@ -453,7 +457,7 @@ def detect_timestamp_role(
             if TimestampFormat.is_apple_timestamp_sentinel(val):
                 # Sentinels are valid but don't count toward format detection
                 continue
-            ts_format = TimestampFormat.detect_timestamp_format(val)
+            ts_format = TimestampFormat.detect_timestamp_format(val, min_year, max_year)
             if ts_format:
                 timestamp_detections.append(ts_format)
 
@@ -789,6 +793,9 @@ def generate_table_rubric(
     infer_fks: bool = True,
     check_fk_data: bool = True,
     min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> dict[str, Any]:
     """
     Generate a complete rubric for a single table.
@@ -805,6 +812,9 @@ def generate_table_rubric(
         infer_fks: Whether to infer foreign keys (default: True)
         check_fk_data: Whether to validate FKs with data (expensive, default: True)
         min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case role (default: 5)
+        min_year: Minimum plausible year for timestamps (default: 2000)
+        max_year: Maximum plausible year for timestamps (default: 2038)
 
     Returns:
         Dictionary with rubric metadata for this table
@@ -941,14 +951,14 @@ def generate_table_rubric(
         is_pk = bool(pk)
         has_pk_in_name = "PK" in col_name.upper()
         is_timestamp, timestamp_format, is_nullable = detect_timestamp_role(
-            col_values, effective_type, is_pk, has_pk_in_name, min_timestamp_rows
+            col_values, effective_type, is_pk, has_pk_in_name, min_timestamp_rows, min_year, max_year
         )
         if is_timestamp:
             # Use nullable_timestamp role if column has zeros (0 = null/absent timestamp)
             col_meta["role"] = "nullable_timestamp" if is_nullable else "timestamp"
             col_meta["timestamp_format"] = timestamp_format
         # UUID detection (use effective_type for accurate detection)
-        elif detect_uuid_role(col_values, effective_type):
+        elif detect_uuid_role(col_values, effective_type, min_role_sample_size):
             col_meta["role"] = "uuid"
         # Pattern detection from actual data (requires 100% confidence)
         # NOTE: We do NOT use column name heuristics to avoid false positives.

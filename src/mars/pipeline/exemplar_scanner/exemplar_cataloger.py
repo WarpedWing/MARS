@@ -469,11 +469,18 @@ class ExemplarCataloger:
                     schema_dir = self.output.get_schema_dir(db_name)
 
                     try:
+                        # Extract year bounds from config dates (format: YYYY-MM-DD)
+                        min_year = int(self.config.exemplar.epoch_min[:4])
+                        max_year = int(self.config.exemplar.epoch_max[:4])
+
                         schema_path, rubric_path = generate_schema_and_rubric(
                             output_db,
                             schema_dir,
                             f"{db_name}_combined",
                             min_timestamp_rows=self.config.exemplar.min_timestamp_rows,
+                            min_role_sample_size=self.config.exemplar.min_role_sample_size,
+                            min_year=min_year,
+                            max_year=max_year,
                         )
 
                         # Track unique schema directory
@@ -798,11 +805,18 @@ class ExemplarCataloger:
             )
 
             # Generate schema and rubric from combined data
+            # Extract year bounds from config dates (format: YYYY-MM-DD)
+            min_year = int(self.config.exemplar.epoch_min[:4])
+            max_year = int(self.config.exemplar.epoch_max[:4])
+
             schema_path, rubric_path = generate_schema_and_rubric(
                 temp_combined_path,
                 schema_dir,
                 f"{version_name}_combined",
                 min_timestamp_rows=self.config.exemplar.min_timestamp_rows,
+                min_role_sample_size=self.config.exemplar.min_role_sample_size,
+                min_year=min_year,
+                max_year=max_year,
             )
 
             # Track unique schema directory
@@ -1245,11 +1259,18 @@ class ExemplarCataloger:
                     # Use appropriate base name for schema files
                     schema_base = output_name if is_single else f"{output_name}_combined"
 
+                    # Extract year bounds from config dates (format: YYYY-MM-DD)
+                    min_year = int(self.config.exemplar.epoch_min[:4])
+                    max_year = int(self.config.exemplar.epoch_max[:4])
+
                     schema_path, rubric_path = generate_schema_and_rubric(
                         output_db,
                         schema_dir,
                         schema_base,
                         min_timestamp_rows=self.config.exemplar.min_timestamp_rows,
+                        min_role_sample_size=self.config.exemplar.min_role_sample_size,
+                        min_year=min_year,
+                        max_year=max_year,
                     )
 
                     # Track unique schema directory

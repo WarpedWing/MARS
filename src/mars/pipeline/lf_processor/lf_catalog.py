@@ -104,6 +104,10 @@ def match_catalog_databases(
     catalog_groups: dict,
     prep_lookup: dict,
     exemplar_db_dir: Path | None,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> dict:
     """
     Match LF tables from catalog databases against their exemplar rubrics.
@@ -112,6 +116,10 @@ def match_catalog_databases(
         catalog_groups: Dict mapping exemplar_name -> [database records]
         prep_lookup: Dict mapping db_name -> prepared database info
         exemplar_db_dir: Path to exemplar databases directory
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         Dict mapping exemplar_name -> [db_entries with match_results]
@@ -186,6 +194,10 @@ def match_catalog_databases(
                     exact_match_name=exemplar_name,
                     nearest_exemplar_names=None,
                     per_db_ignorable_tables=per_db_ignorable_tables,
+                    min_timestamp_rows=min_timestamp_rows,
+                    min_role_sample_size=min_role_sample_size,
+                    min_year=min_year,
+                    max_year=max_year,
                 )
             else:
                 # Database has no LF tables - only intact data to copy
@@ -225,6 +237,10 @@ def create_catalog_outputs(
     progress_context: ProgressContextType | None = None,
     phase_sub_task: TaskID | None = None,
     consumed_lf_tables: dict[str, set[str]] | None = None,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> dict:
     """
     Create output databases for all catalog matches.
@@ -242,6 +258,10 @@ def create_catalog_outputs(
         consumed_lf_tables: Optional dict tracking which LF tables have been consumed.
             Keys are db_name, values are sets of lf_table names. Modified in place
             as LF tables are inserted into output databases.
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         Dict with processing statistics
@@ -433,6 +453,10 @@ def create_catalog_outputs(
             databases_dir=databases_dir,
             exemplar_db_dir=exemplar_db_dir,
             consumed_lf_tables=consumed_lf_tables,
+            min_timestamp_rows=min_timestamp_rows,
+            min_role_sample_size=min_role_sample_size,
+            min_year=min_year,
+            max_year=max_year,
         )
         total_created += multi_created
 
@@ -463,6 +487,10 @@ def _create_multi_catalogs(
     databases_dir: Path,
     exemplar_db_dir: Path,
     consumed_lf_tables: dict[str, set[str]] | None = None,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> int:
     """
     Create _multi catalogs from aggregated db_entries across user exemplars.
@@ -473,6 +501,10 @@ def _create_multi_catalogs(
         exemplar_db_dir: Path to exemplar databases directory
         consumed_lf_tables: Optional dict tracking which LF tables have been consumed.
             Modified in place as LF tables are inserted.
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         Number of _multi catalogs created
@@ -546,7 +578,13 @@ def _create_multi_catalogs(
             split_db = entry.get("split_db")
             if split_db and split_db.exists():
                 entry["match_results"] = match_lf_tables_to_exemplars(
-                    split_db, multi_rubrics, per_db_ignorable_tables=per_db_ignorable_tables
+                    split_db,
+                    multi_rubrics,
+                    per_db_ignorable_tables=per_db_ignorable_tables,
+                    min_timestamp_rows=min_timestamp_rows,
+                    min_role_sample_size=min_role_sample_size,
+                    min_year=min_year,
+                    max_year=max_year,
                 )
 
         logger.debug(f"      Creating {multi_name} from {len(unique_db_entries)} source(s) ({', '.join(user_names)})")

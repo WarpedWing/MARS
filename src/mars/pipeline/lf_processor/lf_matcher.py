@@ -125,7 +125,14 @@ def infer_pk_type_from_lf_table(split_db: Path, table_name: str) -> str:
     return "unknown"
 
 
-def generate_lf_table_rubric(split_db: Path, table_name: str) -> dict:
+def generate_lf_table_rubric(
+    split_db: Path,
+    table_name: str,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
+) -> dict:
     """
     Generate rubric for a lost_and_found split table.
 
@@ -133,6 +140,17 @@ def generate_lf_table_rubric(split_db: Path, table_name: str) -> dict:
     and keeps only data columns (c0, c1, c2, ...).
 
     Also detects NULL PK columns (c0 with >95% NULL values, likely ROWID placeholder).
+
+    Args:
+        split_db: Path to split database containing LF tables
+        table_name: Name of LF table
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
+
+    Returns:
+        Rubric dict for the LF table
     """
     with sqlite3.connect(split_db) as con:
         rubric = generate_table_rubric(
@@ -140,6 +158,10 @@ def generate_lf_table_rubric(split_db: Path, table_name: str) -> dict:
             table_name,
             stats_sample_size=10000,
             infer_fks=False,  # Skip FK inference for lost_and_found tables
+            min_timestamp_rows=min_timestamp_rows,
+            min_role_sample_size=min_role_sample_size,
+            min_year=min_year,
+            max_year=max_year,
         )
 
         # Filter out metadata columns (rootpgno, pgno, nfield, original_id)
@@ -865,6 +887,10 @@ def match_lf_table_to_exemplars(
     lf_table: str,
     exemplar_rubrics: list[dict],
     per_db_ignorable_tables: dict[str, set[str]] | None = None,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> list[dict]:
     """
     Match a single LF table against multiple exemplar rubrics.
@@ -879,6 +905,10 @@ def match_lf_table_to_exemplars(
         per_db_ignorable_tables: Optional dict mapping exemplar_name -> set of
             table names to ignore for that specific exemplar. These are loaded
             from artifact_recovery_catalog.yaml (e.g., "settings" for Kext Policy Database).
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         List of matches sorted by score (highest first):
@@ -898,7 +928,14 @@ def match_lf_table_to_exemplars(
         ]
     """
     # Generate rubric for LF table
-    lf_rubric = generate_lf_table_rubric(split_db, lf_table)
+    lf_rubric = generate_lf_table_rubric(
+        split_db,
+        lf_table,
+        min_timestamp_rows=min_timestamp_rows,
+        min_role_sample_size=min_role_sample_size,
+        min_year=min_year,
+        max_year=max_year,
+    )
 
     # Get table info
     table_info = get_table_info(split_db, lf_table)
@@ -963,6 +1000,10 @@ def match_lf_tables_to_exemplars(
     exact_match_name: str | None = None,
     nearest_exemplar_names: list[str] | None = None,
     per_db_ignorable_tables: dict[str, set[str]] | None = None,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> dict[str, list[dict]]:
     """
     Match all LF tables in a split database against exemplar rubrics.
@@ -978,6 +1019,10 @@ def match_lf_tables_to_exemplars(
         per_db_ignorable_tables: Optional dict mapping exemplar_name -> set of
             table names to ignore for that specific exemplar. These are loaded
             from artifact_recovery_catalog.yaml (e.g., "settings" for Kext Policy Database).
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         {
@@ -999,7 +1044,16 @@ def match_lf_tables_to_exemplars(
     # Match each LF table
     results = {}
     for idx, lf_table in enumerate(lf_tables, 1):
-        matches = match_lf_table_to_exemplars(split_db, lf_table, filtered_rubrics, per_db_ignorable_tables)
+        matches = match_lf_table_to_exemplars(
+            split_db,
+            lf_table,
+            filtered_rubrics,
+            per_db_ignorable_tables,
+            min_timestamp_rows=min_timestamp_rows,
+            min_role_sample_size=min_role_sample_size,
+            min_year=min_year,
+            max_year=max_year,
+        )
         results[lf_table] = matches
 
         # Periodic gc.collect() every 50 LF tables to release SQLite connections

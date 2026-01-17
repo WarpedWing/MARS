@@ -7,10 +7,18 @@ with provenance tracking (data_source column).
 
 import contextlib
 import gc
+import json
+import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from mars.pipeline.matcher.rubric_utils import (
+    TimestampFormat,
+    detect_enhanced_pattern_type,
+    detect_pattern_type,
+)
 from mars.utils.database_utils import quote_identifier, readonly_connection
 from mars.utils.debug_logger import logger
 
@@ -39,8 +47,6 @@ def _validate_row_against_rubric(
     Returns:
         (is_valid, rejection_reason) tuple
     """
-    import re
-
     if not rubric_metadata or "tables" not in rubric_metadata:
         return True, None
 
@@ -84,8 +90,6 @@ def _validate_row_against_rubric(
                 # Validate against the detected timestamp format (the "lock and key" system)
                 expected_format = col_meta.get("timestamp_format")
 
-                from mars.pipeline.matcher.rubric_utils import TimestampFormat
-
                 # Allow Apple sentinel values (distantPast/distantFuture) to pass
                 # These represent null/empty dates in Cocoa databases
                 if TimestampFormat.is_apple_timestamp_sentinel(val):
@@ -123,8 +127,6 @@ def _validate_row_against_rubric(
         # Validate UUID role
         if "uuid" in roles:
             try:
-                from mars.pipeline.matcher.rubric_utils import detect_pattern_type
-
                 # Convert bytes to string if needed
                 text = (
                     val.decode("utf-8", errors="ignore")
@@ -152,11 +154,6 @@ def _validate_row_against_rubric(
 
         if detected_pattern_roles:
             try:
-                from mars.pipeline.matcher.rubric_utils import (
-                    detect_enhanced_pattern_type,
-                    detect_pattern_type,
-                )
-
                 # Convert to string if needed
                 text_val = str(val) if val is not None else ""
 
@@ -481,8 +478,6 @@ def reconstruct_database_with_schema(
         table_schemas: Dict mapping table_name -> schema dict (from get_table_schema)
         add_data_source_column: If True, add 'data_source' TEXT column to each table
     """
-    import re
-
     # Remove existing file if present
     if output_db_path.exists():
         output_db_path.unlink()
@@ -917,8 +912,6 @@ def copy_table_data_with_provenance(
                     rubric_path = exemplar_schemas_dir / f"{exemplar_name}{suffix}.rubric.json"
                     if rubric_path.exists():
                         try:
-                            import json
-
                             with Path.open(rubric_path) as f:
                                 rubric_metadata = json.load(f)
                             break
@@ -1139,7 +1132,7 @@ def copy_table_data_with_provenance(
     cleanup_wal_files(target_db)
 
     # Force garbage collection to release SQLite connections
-    gc.collect()
+    # gc.collect()
 
     return rows_copied
 
@@ -1218,9 +1211,6 @@ def create_manifest_file(
     Returns:
         True if successful, False otherwise
     """
-    import json
-    from datetime import datetime
-
     try:
         manifest = {
             "output_type": output_type,

@@ -21,10 +21,6 @@ from typing import Any
 LNF_TABLE = "lost_and_found"
 LNF_ID_COL_INDEX = 3  # 4th column (0-indexed) is often the row ID
 
-# Default epoch bounds (can be overridden by rubric)
-DEFAULT_EPOCH_MIN = 946684800.0  # 2000-01-01
-DEFAULT_EPOCH_MAX = 2147483647.0  # 2038-01-19 (Unix 32-bit max)
-
 # Numeric pattern for string coercion
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$")
 

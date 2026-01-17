@@ -26,6 +26,10 @@ def generate_self_rubric_for_catalog(
     db_name: str,
     databases_dir: Path,
     min_tables: int = 3,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
 ) -> dict | None:
     """
     Generate a self-rubric from the chosen variant database for CATALOG processing.
@@ -38,6 +42,10 @@ def generate_self_rubric_for_catalog(
         db_name: Database name
         databases_dir: Base directory (typically paths.db_selected_variants.parent)
         min_tables: Minimum tables required (default: 3)
+        min_timestamp_rows: Minimum timestamp values to assign role (default: 1)
+        min_role_sample_size: Minimum samples for UUID/programming_case detection (default: 5)
+        min_year: Minimum year for timestamp validation (default: 2000)
+        max_year: Maximum year for timestamp validation (default: 2038)
 
     Returns:
         Dict with "rubric", "rubric_path", "db_path" or None if not qualified
@@ -76,7 +84,15 @@ def generate_self_rubric_for_catalog(
                 return None
 
             # Generate rubric
-            rubric = generate_rubric(con, filtered_tables, rubric_name=db_name)
+            rubric = generate_rubric(
+                con,
+                filtered_tables,
+                rubric_name=db_name,
+                min_timestamp_rows=min_timestamp_rows,
+                min_role_sample_size=min_role_sample_size,
+                min_year=min_year,
+                max_year=max_year,
+            )
 
         # Validate rubric is a dict with tables
         if not isinstance(rubric, dict):

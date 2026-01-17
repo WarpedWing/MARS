@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mars.config.schema import CarverConfig
 from mars.utils.debug_logger import logger
 from mars.utils.file_utils import read_jsonl
 
@@ -239,16 +240,18 @@ class DatabaseCarver:
         console = Console()
 
         try:
+            # Use CarverConfig settings instead of hardcoded values
+            carver_cfg = self.config.carver if self.config else CarverConfig()
             results = batch_carve_databases(
                 databases=databases_to_carve,
                 output_dir=self.paths.db_carved,
-                ts_start="2015-01-01",
-                ts_end="2030-01-01",
-                filter_mode="permissive",
-                enable_protobuf=True,
-                enable_csv=False,
-                enable_parallel=True,
-                parallel_threshold=10,
+                ts_start=carver_cfg.ts_start,
+                ts_end=carver_cfg.ts_end,
+                filter_mode=carver_cfg.filter_mode,
+                enable_protobuf=carver_cfg.decode_protobuf,
+                enable_csv=carver_cfg.csv_export,
+                enable_parallel=carver_cfg.parallel_processing,
+                parallel_threshold=carver_cfg.parallel_threshold,
                 console=console,
                 config=self.config,
             )

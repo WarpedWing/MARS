@@ -308,18 +308,23 @@ def attempt_clone(
         except Exception:
             pass
         finally:
-            # Ensure processes are reaped even on early return to prevent FD leaks
+            # Close all pipe handles before process cleanup to prevent FD leaks
+            # Pipes remain open even after process termination until explicitly closed
             for proc in [p1, p2]:
-                if proc is not None and proc.poll() is None:
-                    try:
-                        proc.terminate()
-                        proc.wait(timeout=1)
-                    except Exception:
+                if proc is not None:
+                    for pipe in [proc.stdin, proc.stdout, proc.stderr]:
+                        if pipe is not None:
+                            with contextlib.suppress(Exception):
+                                pipe.close()
+                    # Reap zombie processes
+                    if proc.poll() is None:
                         try:
-                            proc.kill()
-                            proc.wait()
+                            proc.terminate()
+                            proc.wait(timeout=1)
                         except Exception:
-                            pass
+                            with contextlib.suppress(Exception):
+                                proc.kill()
+                                proc.wait()
 
     return None
 
