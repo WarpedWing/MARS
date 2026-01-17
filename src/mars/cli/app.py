@@ -182,7 +182,7 @@ class MARSCLI:
 ║    [navajo_white1]macOS Artifact Recovery Suite[/navajo_white1]    ║
 ║                                     ║
 ║           [grey42]WarpedWing Labs[/grey42]           ║
-║                [grey23]v1.0[/grey23]                 ║
+║                [grey23]v1.0.2[/grey23]               ║
 ╚═════════════════════════════════════╝[/bold red3]
 """
         self.console.print(banner)
