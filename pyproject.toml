@@ -1,6 +1,6 @@
 [project]
 name = "mars"
-version = "1.0.2"
+version = "1.0.3"
 description = "macOS Artifact Recovery Suite (MARS) is a forensic scanner and recovery toolkit for macOS images. It discovers logs, databases, and caches, salvages carved SQLite data, and correlates recovered records with exemplar artifacts."
 readme = "README.md"
 requires-python = ">=3.13"
