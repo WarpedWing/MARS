@@ -641,6 +641,13 @@ class DFVFSExporter:
         modified = _get_dfvfs_time(file_entry, "modification")
         accessed = _get_dfvfs_time(file_entry, "access")
 
+        # Debug: Log if timestamps couldn't be extracted from dfVFS
+        if created is None and modified is None:
+            logger.debug(
+                f"[dfvfs] No timestamps from file_entry for {virtual_path}. "
+                f"Available attrs: {[a for a in dir(file_entry) if 'time' in a.lower()]}"
+            )
+
         return ExportRecord(
             virtual_path=virtual_path,
             export_path=dest_path,
@@ -707,6 +714,14 @@ def _match_target(pattern_entries, virtual_path: str):
 
 
 def _get_dfvfs_time(file_entry, attribute: str) -> datetime | None:
+    """
+    Extract timestamp from dfVFS file_entry using multiple methods.
+
+    Different filesystem types expose timestamps in different ways:
+    - Direct attributes: creation_time, modification_time, access_time
+    - Via GetStatAttribute() method
+    - Via _stat_object internal attribute
+    """
     mapping = {
         "creation": "creation_time",
         "modification": "modification_time",
@@ -715,8 +730,55 @@ def _get_dfvfs_time(file_entry, attribute: str) -> datetime | None:
     attr = mapping.get(attribute)
     if not attr:
         return None
+
+    # Method 1: Direct attribute access (most common)
     timestamp = getattr(file_entry, attr, None)
-    return _convert_timestamp(timestamp)
+    if timestamp is not None:
+        result = _convert_timestamp(timestamp)
+        if result is not None:
+            return result
+
+    # Method 2: Try GetStatAttribute method (some filesystem implementations)
+    try:
+        stat_attr_method = getattr(file_entry, "GetStatAttribute", None)
+        if stat_attr_method:
+            stat_value = stat_attr_method(attr)
+            if stat_value is not None:
+                result = _convert_timestamp(stat_value)
+                if result is not None:
+                    return result
+    except Exception:
+        pass
+
+    # Method 3: Try _stat_object internal attribute
+    try:
+        stat_obj = getattr(file_entry, "_stat_object", None)
+        if stat_obj:
+            stat_timestamp = getattr(stat_obj, attr, None)
+            if stat_timestamp is not None:
+                result = _convert_timestamp(stat_timestamp)
+                if result is not None:
+                    return result
+    except Exception:
+        pass
+
+    # Method 4: Try stat_attribute property with different naming
+    alt_mapping = {
+        "creation_time": ["crtime", "st_birthtime", "st_ctime"],
+        "modification_time": ["mtime", "st_mtime"],
+        "access_time": ["atime", "st_atime"],
+    }
+    for alt_attr in alt_mapping.get(attr, []):
+        try:
+            alt_timestamp = getattr(file_entry, alt_attr, None)
+            if alt_timestamp is not None:
+                result = _convert_timestamp(alt_timestamp)
+                if result is not None:
+                    return result
+        except Exception:
+            pass
+
+    return None
 
 
 def _convert_timestamp(value) -> datetime | None:
@@ -734,16 +796,36 @@ def _convert_timestamp(value) -> datetime | None:
         except (OverflowError, OSError, ValueError):
             return None
 
-    # dfdatetime values provide CopyToDateTime in newer releases
+    # dfdatetime values - try multiple conversion methods
     date_time_values_cls = getattr(dfdatetime_interface, "DateTimeValues", None)
     if date_time_values_cls and isinstance(value, date_time_values_cls):
+        # Method 1: Try CopyToPosixTimestamp (most reliable)
+        try:
+            posix_ts = value.CopyToPosixTimestamp()
+            if posix_ts is not None:
+                return datetime.fromtimestamp(posix_ts, tz=UTC)
+        except (AttributeError, OverflowError, OSError, ValueError):
+            pass
+
+        # Method 2: Try CopyToDateTimeString and parse (fallback)
+        try:
+            dt_string = value.CopyToDateTimeString()
+            if dt_string:
+                # Format is typically "YYYY-MM-DD HH:MM:SS" or similar
+                parsed = datetime.fromisoformat(dt_string.replace(" ", "T"))
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=UTC)
+                return parsed.astimezone(UTC)
+        except (AttributeError, ValueError):
+            pass
+
+        # Method 3: Try CopyToDateTime (older dfdatetime versions)
         try:
             dt_object = value.CopyToDateTime()
-            if dt_object is None:
-                return None
-            if dt_object.tzinfo is None:
-                return dt_object.replace(tzinfo=UTC)
-            return dt_object.astimezone(UTC)
+            if dt_object is not None:
+                if dt_object.tzinfo is None:
+                    return dt_object.replace(tzinfo=UTC)
+                return dt_object.astimezone(UTC)
         except AttributeError:
             pass
 
