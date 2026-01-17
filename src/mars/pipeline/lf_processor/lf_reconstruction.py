@@ -401,7 +401,6 @@ def reconstruct_exemplar_database(
         gc.collect()
 
     # Deduplicate ALL tables (both intact and LF data)
-    # This is critical for cases like Powerlog where multiple archives contain overlapping intact data
     total_dupes = 0
     tables_to_dedup = (set(table_schemas) | tables_with_lf) - shared_tables
 

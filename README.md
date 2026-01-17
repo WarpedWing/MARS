@@ -169,7 +169,7 @@ alt="Wifi location map" />
 ### Installation
 
 1. Download the latest release for your platform
-2. Extract the archive and enter the directory
+2. Extract the archive to an external drive and enter the directory
 3. Run the installer:
 
 **macOS:**
