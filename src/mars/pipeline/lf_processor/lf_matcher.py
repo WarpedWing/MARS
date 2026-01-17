@@ -998,9 +998,14 @@ def match_lf_tables_to_exemplars(
 
     # Match each LF table
     results = {}
-    for lf_table in lf_tables:
+    for idx, lf_table in enumerate(lf_tables, 1):
         matches = match_lf_table_to_exemplars(split_db, lf_table, filtered_rubrics, per_db_ignorable_tables)
         results[lf_table] = matches
+
+        # Periodic gc.collect() every 20 LF tables to release SQLite connections
+        # CRITICAL: Prevents file handle exhaustion (ERRNO 24)
+        if idx % 20 == 0:
+            gc.collect()
 
     # Force garbage collection after processing all LF tables to release SQLite connections
     gc.collect()

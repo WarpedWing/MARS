@@ -33,8 +33,46 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from mars.config.schema import GLOBAL_IGNORABLE_TABLES, SchemaComparisonConfig
 from mars.utils.database_utils import readonly_connection
 from mars.utils.debug_logger import logger
+
+# Load ignorable patterns from config
+_config = SchemaComparisonConfig()
+IGNORABLE_PREFIXES = _config.ignorable_prefixes
+IGNORABLE_SUFFIXES = _config.ignorable_suffixes
+
+
+def is_ignorable_table_for_rubric(table_name: str) -> bool:
+    """Check if a table should be excluded from rubrics and schema hashes.
+
+    Tables are excluded if they:
+    - Are in GLOBAL_IGNORABLE_TABLES (sqlite_stat*, sqlean_define, meta tables, etc.)
+    - Start with an ignorable prefix (sqlite_, sqlean_)
+    - End with an ignorable suffix (FTS shadow tables)
+
+    This ensures rubrics and schema hashes are consistent between exemplar
+    and candidate databases, regardless of SQLite extensions or recovery artifacts.
+
+    Args:
+        table_name: Name of the table to check
+
+    Returns:
+        True if the table should be excluded from rubrics
+    """
+    name_lower = table_name.lower()
+
+    # Check exact matches
+    if name_lower in {t.lower() for t in GLOBAL_IGNORABLE_TABLES}:
+        return True
+
+    # Check prefixes
+    if any(name_lower.startswith(prefix.lower()) for prefix in IGNORABLE_PREFIXES):
+        return True
+
+    # Check suffixes (FTS shadow tables, but NOT the main FTS table)
+    # Note: Only exclude shadow tables, not all FTS tables
+    return any(name_lower.endswith(suffix.lower()) for suffix in IGNORABLE_SUFFIXES)
 
 
 # -------- Helpers --------
@@ -130,11 +168,39 @@ def generate_rubric(
         "tables": {},
     }
 
-    # Get all table names for FK inference
-    all_table_names = [tname for tname, _ in tables]
+    # Filter out ignorable tables (sqlite_stat*, sqlean_define, etc.)
+    # This ensures rubrics exclude system/extension tables that would cause
+    # schema hash mismatches between exemplar and recovered databases
+    #
+    # Also filter out FTS virtual tables - they can't be analyzed (no columns via PRAGMA)
+    # and can't be recreated during recovery without the tokenizer module.
+    # FTS data lives in shadow tables (_content, _data, etc.) which are also filtered.
+    def is_fts_virtual_table(sql: str | None) -> bool:
+        """Check if CREATE statement indicates an FTS virtual table."""
+        if not sql:
+            return False
+        sql_upper = sql.upper()
+        return "USING FTS" in sql_upper or "VIRTUAL TABLE" in sql_upper and "FTS" in sql_upper
+
+    filtered_tables = [
+        (tname, sql)
+        for tname, sql in tables
+        if not is_ignorable_table_for_rubric(tname) and not is_fts_virtual_table(sql)
+    ]
+
+    # Track what was filtered for debugging
+    ignored_by_name = [tname for tname, _ in tables if is_ignorable_table_for_rubric(tname)]
+    ignored_fts = [tname for tname, sql in tables if is_fts_virtual_table(sql)]
+    if ignored_by_name:
+        logger.debug(f"  Rubric gen: filtered {len(ignored_by_name)} ignorable tables: {ignored_by_name}")
+    if ignored_fts:
+        logger.debug(f"  Rubric gen: filtered {len(ignored_fts)} FTS virtual tables: {ignored_fts}")
+
+    # Get all table names for FK inference (using filtered list)
+    all_table_names = [tname for tname, _ in filtered_tables]
 
     skipped_tables = []
-    for tname, _sql in tables:
+    for tname, _sql in filtered_tables:
         # Use unified rubric generator (consolidates all improvements)
         table_rubric = generate_table_rubric(
             conn=conn,

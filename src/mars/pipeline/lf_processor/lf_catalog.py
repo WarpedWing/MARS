@@ -167,7 +167,7 @@ def match_catalog_databases(
         catalog_tracking[exemplar_name] = []
 
         # Match LF tables from each database in this catalog group
-        for db_record in databases:
+        for db_idx, db_record in enumerate(databases, 1):
             db_name = Path(db_record["case_path"]).stem
 
             # Find prepared database info
@@ -203,6 +203,11 @@ def match_catalog_databases(
                     "record": db_record,  # Keep full record for access to exact_matches
                 }
             )
+
+            # Periodic gc.collect() every 10 databases within a group
+            # CRITICAL: Prevents file handle exhaustion (ERRNO 24)
+            if db_idx % 10 == 0:
+                gc.collect()
 
         # Force garbage collection after each catalog group to release SQLite
         # connections opened by match_lf_tables_to_exemplars() (prevents ERRNO 24)
@@ -248,24 +253,8 @@ def create_catalog_outputs(
     # Track _multi groups: maps multi_name -> list of (exemplar_name, db_entries)
     multi_groups: dict[str, list[tuple[str, list]]] = {}
 
-    DEBUG_TARGETS = {"f688414152", "f799189712"}  # Notification Center, Message Entities
-
     for exemplar_name, db_entries in catalog_tracking.items():
         current_idx += 1
-
-        # DEBUG: Track Calendar Cache and target databases
-        is_calendar = "Calendar" in exemplar_name
-        is_debug_target = any(entry.get("db_name") in DEBUG_TARGETS for entry in db_entries)
-        if is_debug_target or is_calendar:
-            logger.debug(f"  [DEBUG-CATALOG] Phase 4 processing: {exemplar_name}")
-            logger.debug(f"    db_entries count: {len(db_entries)}")
-            for entry in db_entries:
-                logger.debug(f"      - {entry.get('db_name')}: split_db={entry.get('split_db') is not None}")
-                if entry.get("db_name") in DEBUG_TARGETS:
-                    logger.debug(f"        match_results: {len(entry.get('match_results', {}) or {})}")
-                    if entry.get("match_results"):
-                        for lf_table, matches in list(entry["match_results"].items())[:3]:
-                            logger.debug(f"          {lf_table}: {len(matches)} match(es)")
 
         # Update phase sub-task with current catalog being processed
         if progress_context and phase_sub_task:
@@ -275,8 +264,6 @@ def create_catalog_outputs(
                 description=f"Catalog {current_idx}/{total_groups}: {exemplar_name}",
             )
         if not db_entries:
-            if is_debug_target or is_calendar:
-                logger.debug("    [DEBUG] Skipping: no db_entries")
             continue
 
         # Find exemplar rubric
@@ -386,12 +373,6 @@ def create_catalog_outputs(
             skip_shared_tables=not has_unique_match,  # Keep all tables for unique matches
         )
 
-        if is_debug_target or is_calendar:
-            logger.debug(f"    [DEBUG] reconstruct result: success={result.get('success')}")
-            logger.debug(
-                f"      intact_rows={result.get('total_intact_rows', 0)}, lf_rows={result.get('total_lf_rows', 0)}"
-            )
-
         if result.get("success"):
             total_rows = result.get("total_intact_rows", 0) + result.get("total_lf_rows", 0)
 
@@ -416,9 +397,6 @@ def create_catalog_outputs(
                     # Force garbage collection to release SQLite connection (Windows)
                     gc.collect()
 
-            if is_debug_target or is_calendar:
-                logger.debug(f"    [DEBUG] total_rows={total_rows}, is_effectively_empty={is_effectively_empty}")
-
             if total_rows == 0 or is_effectively_empty:
                 # Move to empty/ instead of deleting - keeps LF fragments for inspection
                 empty_dir = databases_dir / "empty"
@@ -439,16 +417,9 @@ def create_catalog_outputs(
                                 time.sleep(0.1 * (attempt + 1))
                             else:
                                 raise
-                if is_debug_target or is_calendar:
-                    logger.debug(f"    [DEBUG] Moved to empty/: {exemplar_name}")
                 logger.debug(f"      Moved empty catalog to empty/: {exemplar_name}")
             else:
-                if is_debug_target or is_calendar:
-                    logger.debug(f"    [DEBUG] Created catalog successfully: {exemplar_name}")
                 total_created += 1
-        else:
-            if is_debug_target or is_calendar:
-                logger.debug(f"    [DEBUG] reconstruct FAILED: {result.get('error', 'unknown')}")
 
         # Force garbage collection after each exemplar to release any unreferenced
         # connections and prevent file descriptor exhaustion (ERRNO 24)

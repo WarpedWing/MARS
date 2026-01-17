@@ -206,9 +206,12 @@ def introspect_db(
             meta.has_lost_and_found = bool(lf_found)
             meta.lost_and_found_tables = lf_found
 
-        # Build effective set excluding ignorable + salvage
+        # Build effective set excluding ignorable + salvage + virtual/FTS tables
+        # FTS virtual tables are excluded for consistent schema hashing
         meta.effective_table_names = {
-            t for t in meta.table_names if not is_ignorable_table(t, ignore_tables, ignore_prefixes, ignore_suffixes)
+            t
+            for t in meta.table_names
+            if not is_ignorable_table(t, ignore_tables, ignore_prefixes, ignore_suffixes) and not td[t].is_virtual
         }
 
         # columns_by_table for effective tables
@@ -258,9 +261,16 @@ def introspect_db(
             meta.has_lost_and_found = bool(lf_found)
             meta.lost_and_found_tables = lf_found
 
-        # Effective tables (exclude ignorable + salvage)
+        # Effective tables (exclude ignorable + salvage + virtual/FTS tables)
+        # FTS virtual tables are excluded because:
+        # 1. They can't be analyzed (no columns via PRAGMA table_info)
+        # 2. They can't be recreated during recovery without the tokenizer module
+        # 3. Their data lives in shadow tables which are also filtered
+        # This ensures schema hashes match between exemplar and recovered databases
         meta.effective_table_names = {
-            t for t in meta.table_names if not is_ignorable_table(t, ignore_tables, ignore_prefixes, ignore_suffixes)
+            t
+            for t in meta.table_names
+            if not is_ignorable_table(t, ignore_tables, ignore_prefixes, ignore_suffixes) and not tables[t].is_virtual
         }
 
         # Non-empty / non-null probes (skip salvage)

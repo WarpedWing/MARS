@@ -219,18 +219,6 @@ class LFOrchestrator:
                 case_path = record.get("case_path", "")
                 db_name = Path(case_path).stem if case_path else f"unknown_{idx}"
 
-                # DEBUG: Track specific databases through pipeline
-                DEBUG_TARGETS = {"f688414152", "f799189712"}  # Notification Center, Contacts
-                is_debug_target = db_name in DEBUG_TARGETS
-                is_calendar = "calendar" in db_name.lower() or any(
-                    "Calendar" in str(m.get("label", "")) for m in record.get("exact_matches", [])
-                )
-                if is_debug_target or is_calendar:
-                    logger.debug(f"  [DEBUG-{db_name}] Phase 1: Processing database")
-                    logger.debug(f"    exact_matches: {record.get('exact_matches', [])}")
-                    logger.debug(f"    decision: {record.get('decision', {})}")
-                    logger.debug(f"    metamatch: {record.get('metamatch', {})}")
-
                 ctx.update_sub(phase1_sub, idx, description=f"Splitting {db_name}")
 
                 chosen_variant_path = get_chosen_variant_path(record)
@@ -270,13 +258,7 @@ class LFOrchestrator:
 
                 lf_extracted_db = variants_dir / f"{db_name}_lost_and_found.sqlite"
 
-                if is_debug_target or is_calendar:
-                    logger.debug(f"    [DEBUG-{db_name}] LF file path: {lf_extracted_db}")
-                    logger.debug(f"    [DEBUG-{db_name}] LF file exists: {lf_extracted_db.exists()}")
-
                 if not lf_extracted_db.exists():
-                    if is_debug_target or is_calendar:
-                        logger.debug(f"    [DEBUG-{db_name}] LF file not found, adding with split_db=None")
                     prepared_databases.append(
                         {
                             "record": record,
@@ -304,27 +286,15 @@ class LFOrchestrator:
                                     "SELECT name FROM sqlite_master WHERE type='table' AND name='lost_and_found'"
                                 )
                                 lf_table_exists = cursor.fetchone() is not None
-                        except Exception as e:
-                            if is_debug_target or is_calendar:
-                                logger.debug(f"    [DEBUG-{db_name}] Error checking LF table: {e}")
-
-                        if is_debug_target or is_calendar:
-                            logger.debug(f"    [DEBUG-{db_name}] LF table exists: {lf_table_exists}")
+                        except Exception:
+                            pass
 
                         if lf_table_exists:
                             # Extract and merge fragments
                             fragments = extract_fragments(lf_extracted_db)
-                            if is_debug_target or is_calendar:
-                                logger.debug(
-                                    f"    [DEBUG-{db_name}] Fragments extracted: {len(fragments) if fragments else 0}"
-                                )
 
                             if fragments:
                                 merged_groups = merge_compatible_fragments(fragments)
-                                if is_debug_target or is_calendar:
-                                    logger.debug(
-                                        f"    [DEBUG-{db_name}] Merged groups: {len(merged_groups) if merged_groups else 0}"
-                                    )
 
                                 # Create split database with ONLY LF tables
                                 create_split_database(
@@ -334,18 +304,8 @@ class LFOrchestrator:
                                     source_db_path=None,
                                 )
                                 split_db_created = True
-                                if is_debug_target or is_calendar:
-                                    logger.debug(f"    [DEBUG-{db_name}] Split database created: {split_db_path}")
-                            else:
-                                if is_debug_target or is_calendar:
-                                    logger.debug(f"    [DEBUG-{db_name}] No fragments extracted from LF table")
-                        else:
-                            if is_debug_target or is_calendar:
-                                logger.debug(f"    [DEBUG-{db_name}] No lost_and_found table in extracted DB")
                     else:
                         split_db_created = True
-                        if is_debug_target or is_calendar:
-                            logger.debug(f"    [DEBUG-{db_name}] Split database already exists")
 
                 except Exception as e:
                     logger.error(f"  [{idx}/{len(databases_with_lf)}] {db_name}: Error preparing database: {e}")
@@ -361,9 +321,6 @@ class LFOrchestrator:
                         "self_rubric": None,
                     }
                 )
-
-                if is_calendar:
-                    logger.debug(f"    [DEBUG] Added to prepared_databases with split_db={split_db_created}")
 
                 # Periodic gc.collect() every 25 databases to release SQLite connections
                 # CRITICAL: Prevents file handle exhaustion (ERRNO 24) on large scans
@@ -491,6 +448,11 @@ class LFOrchestrator:
             # ==================================================================
             # PHASE 4: CATALOG - Match and reconstruct
             # ==================================================================
+            # Extra gc.collect() before Phase 4 - MERGE may have accumulated many handles
+            # that need time to be released by the OS even after gc.collect()
+            gc.collect()
+            time.sleep(0.1)  # Brief pause to allow OS to release file handles
+
             ctx.update_main("Phase 4/7: Catalog (exact matches)...", phase=3)
             logger.debug("Phase 4: Catalog (exact matches)...")
 
@@ -947,24 +909,10 @@ class LFOrchestrator:
         metamatch_groups = defaultdict(lambda: {"databases": []})
         individual = []
 
-        # DEBUG: Track specific databases through grouping
-        DEBUG_TARGETS = {"f688414152", "f799189712"}  # Notification Center, Contacts
-
         for record in databases_with_lf:
             # Check for exact catalog match first (highest priority)
             decision = record.get("decision", {})
             is_matched = decision.get("matched", False)
-
-            # DEBUG: Track specific databases in grouping
-            case_path = record.get("case_path", "")
-            db_name = Path(case_path).stem if case_path else ""
-            is_debug_target = db_name in DEBUG_TARGETS
-            is_calendar = any("Calendar" in str(m.get("label", "")) for m in record.get("exact_matches", []))
-
-            if is_debug_target or is_calendar:
-                logger.debug(f"  [DEBUG-{db_name}] Phase 2 grouping: is_matched={is_matched}")
-                logger.debug(f"    decision={decision}")
-                logger.debug(f"    metamatch={record.get('metamatch', {})}")
 
             if is_matched:
                 exact_matches = record.get("exact_matches", [])
@@ -980,8 +928,6 @@ class LFOrchestrator:
                     if full_match:
                         exact_match_label = full_match.get("label")
                         if exact_match_label:
-                            if is_debug_target or is_calendar:
-                                logger.debug(f"  [DEBUG-{db_name}] Grouped to catalog_groups[{exact_match_label}]")
                             catalog_groups[exact_match_label].append(record)
                             continue
 
@@ -1000,10 +946,6 @@ class LFOrchestrator:
                     metamatch_groups[group_id]["first_table"] = metamatch.get("first_table", "unknown")
                     metamatch_groups[group_id]["group_size"] = group_size
 
-                if is_debug_target or is_calendar:
-                    logger.debug(
-                        f"  [DEBUG-{db_name}] Grouped to metamatch_groups[{group_id[:8]}] ({metamatch.get('group_label', 'unknown')})"
-                    )
                 metamatch_groups[group_id]["databases"].append(record)
                 continue
 
@@ -1012,11 +954,7 @@ class LFOrchestrator:
             # Databases without LF have nothing to recover and stay in selected_variants.
             has_lf = record.get("meta_snapshot", {}).get("has_lost_and_found", False)
             if has_lf:
-                if is_debug_target or is_calendar:
-                    logger.debug(f"  [DEBUG-{db_name}] Grouped to individual (NEAREST)")
                 individual.append(record)
-            elif is_debug_target or is_calendar:
-                logger.debug(f"  [DEBUG-{db_name}] Not grouped (no match, no LF)")
 
         # Note: We intentionally do NOT route metamatch groups to NEAREST based on
         # nearest_exemplars. MERGE (metamatch) preserves original schemas and uses
