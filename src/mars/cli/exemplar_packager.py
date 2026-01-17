@@ -333,6 +333,13 @@ class ExemplarPackager:
                         result[key] = value
                 else:
                     result[key] = value
+
+            # Remove numeric stats from all columns to prevent data leakage
+            # Stats contain min/max/mean/stdev derived from actual user data
+            # which could reveal timestamps, coordinates, financial data, etc.
+            # Keep string_stats (length info) and enum_values as they're not sensitive
+            result.pop("stats", None)
+
             return result
         if isinstance(data, list):
             return [
