@@ -204,9 +204,9 @@ def match_catalog_databases(
                 }
             )
 
-            # Periodic gc.collect() every 10 databases within a group
+            # Periodic gc.collect() every 25 databases within a group
             # CRITICAL: Prevents file handle exhaustion (ERRNO 24)
-            if db_idx % 10 == 0:
+            if db_idx % 25 == 0:
                 gc.collect()
 
         # Force garbage collection after each catalog group to release SQLite

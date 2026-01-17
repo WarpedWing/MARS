@@ -768,10 +768,11 @@ def main(
     writer_thread = Thread(target=_jsonl_writer_thread, args=(write_queue, results_path), daemon=True)
     writer_thread.start()
 
-    # Single-threaded processing to prevent FD exhaustion
+    # Parallel processing with limited workers to balance speed vs FD exhaustion
     # Each database can consume 6+ file descriptors during variant creation
     # (subprocess pipes, SQLite connections, temp files)
-    max_workers = 1
+    # With periodic gc.collect() throughout the pipeline, 2 workers is safe
+    max_workers = 4
 
     # Process databases with Rich progress bar (or fallback to simple iteration)
     if richConsole:

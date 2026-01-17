@@ -322,9 +322,9 @@ class LFOrchestrator:
                     }
                 )
 
-                # Periodic gc.collect() every 25 databases to release SQLite connections
+                # Periodic gc.collect() every 50 databases to release SQLite connections
                 # CRITICAL: Prevents file handle exhaustion (ERRNO 24) on large scans
-                if idx % 25 == 0:
+                if idx % 50 == 0:
                     gc.collect()
 
             # Phase 1 complete

@@ -218,8 +218,10 @@ def process_orphan_tables(
             total_orphan_databases += 1
             total_orphan_tables += len(orphan_result["tables"])
 
-        # Force garbage collection after each database to release SQLite connections
-        gc.collect()
+        # Periodic gc.collect() every 10 databases to release SQLite connections
+        # CRITICAL: Prevents file handle exhaustion (ERRNO 24)
+        if current_idx % 10 == 0:
+            gc.collect()
 
     logger.debug(
         f"Orphan: {total_orphan_databases} database(s) created, {total_orphan_tables} orphan table(s) preserved"
