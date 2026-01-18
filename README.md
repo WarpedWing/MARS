@@ -235,7 +235,8 @@ brew tap macos-fuse-t/homebrew-cask
 brew install fuse-t fuse-t-sshfs
 ```
 
-> [!NOTE] Homebrew must be installed first. Get it from <https://brew.sh>
+> [!NOTE]
+> Homebrew must be installed first. Get it from <https://brew.sh>
 
 ### Developer Installation
 
