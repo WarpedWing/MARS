@@ -8,50 +8,75 @@ This directory contains scripts for building and distributing MARS.
 
 - Python 3.13+
 - UV (recommended) or pip with build module
+- Homebrew (macOS, for building dfvfs wheels)
 
-### Building the Wheel
+### Quick Release (Recommended)
+
+The easiest way to create a full release is using the automated script:
 
 ```bash
-# From project root
-./packaging/build.sh
-
-# Or manually:
-uv build --wheel
+./packaging/create-release.sh
 ```
 
-The wheel will be created in `dist/mars-X.X.X-py3-none-any.whl`
+This script automatically:
 
-### Creating a Distribution Package
+1. Builds the MARS wheel
+2. Creates platform-specific distribution directories (macOS ARM64, macOS x86_64, Windows)
+3. Copies install scripts, README, THIRD-PARTY-NOTICES, and license files
+4. Includes pre-built vendor wheels (if available in `vendor/wheels/`)
+5. Creates ZIP archives ready for GitHub release
+
+Output is placed in the `release/` directory.
+
+### Building dfvfs Wheels (Required for Forensic Image Support)
+
+dfvfs (Digital Forensics Virtual File System) enables MARS to directly read forensic disk images
+(E01/EWF, raw, DMG, etc.). Without dfvfs, MARS can only scan live systems and mounted directories.
+
+dfvfs and its libyal dependencies require platform-specific C compilation. To include pre-built
+wheels in your distribution:
+
+```bash
+# Build wheels for current platform
+./packaging/build-wheels.sh
+
+# Or specify output directory
+./packaging/build-wheels.sh /path/to/output
+```
+
+This builds:
+
+- Pure Python packages: dfvfs, dfdatetime, dtfabric, PyYAML
+- macOS-specific: xattr
+- libyal packages: libewf-python, libfsapfs-python, libfshfs-python, etc.
+- pytsk3 (requires sleuthkit via Homebrew on macOS)
+
+Wheels are placed in `vendor/wheels/{platform}/` where platform is one of:
+
+- `macos-arm64` - Apple Silicon
+- `macos-x86_64` - Intel Mac
+- `linux-x86_64` - Linux
+- `windows-x64` - Windows
+
+**Note:** You need to run this on each target platform to build platform-specific wheels.
+
+### Manual Build Steps
+
+If you prefer manual control:
 
 1. Build the wheel:
 
    ```bash
    ./packaging/build.sh
+   # Or: uv build --wheel
    ```
 
-2. Create distribution folder:
+   The wheel will be created in `dist/mars-X.X.X-py3-none-any.whl`
+
+2. Run the release script to create distribution packages:
 
    ```bash
-   mkdir -p MARS-1.0.0-macos
-   cp dist/mars-*.whl MARS-1.0.0-macos/
-   cp packaging/install-macos.sh MARS-1.0.0-macos/install.sh
-   cp README.md MARS-1.0.0-macos/
-   ```
-
-3. For Windows:
-
-   ```bash
-   mkdir -p MARS-1.0.0-windows
-   cp dist/mars-*.whl MARS-1.0.0-windows/
-   cp packaging/install-windows.bat MARS-1.0.0-windows/install.bat
-   cp README.md MARS-1.0.0-windows/
-   ```
-
-4. Create ZIP archives:
-
-   ```bash
-   zip -r MARS-1.0.0-macos.zip MARS-1.0.0-macos/
-   zip -r MARS-1.0.0-windows.zip MARS-1.0.0-windows/
+   ./packaging/create-release.sh
    ```
 
 ---
