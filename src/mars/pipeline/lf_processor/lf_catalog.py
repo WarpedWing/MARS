@@ -383,7 +383,7 @@ def create_catalog_outputs(
             db_entries=db_entries,
             exemplar_rubric=exemplar_rubric,
             output_dir=catalog_dir,
-            output_type="carved",
+            output_type="candidate",
             exemplar_db_dir=exemplar_db_dir,
             progress_context=progress_context,
             base_name=base_name,
@@ -600,7 +600,7 @@ def _create_multi_catalogs(
             db_entries=unique_db_entries,
             exemplar_rubric=multi_rubric,
             output_dir=multi_dir,
-            output_type="carved",
+            output_type="candidate",
             exemplar_db_dir=exemplar_db_dir,
             progress_context=None,
             skip_shared_tables=False,  # Include ALL tables from _multi rubric

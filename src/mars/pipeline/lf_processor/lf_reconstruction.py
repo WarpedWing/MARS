@@ -41,7 +41,7 @@ def reconstruct_exemplar_database(
     db_entries: list[dict],
     exemplar_rubric: dict,
     output_dir: Path,
-    output_type: str,  # "carved" or "found_data"
+    output_type: str,  # "candidate" or "found_data"
     exemplar_db_dir: Path | None,
     progress_context: ProgressContextType | None = None,  # Hierarchical progress context
     skip_shared_tables: bool = True,
@@ -61,7 +61,7 @@ def reconstruct_exemplar_database(
         db_entries: List of database entries with split_db, source_db, match_results
         exemplar_rubric: Exemplar rubric dict with table schemas
         output_dir: Output directory for reconstructed database
-        output_type: "carved" for CATALOG, "found_data" for NEAREST
+        output_type: "candidate" for CATALOG, "found_data" for NEAREST
         exemplar_db_dir: Optional exemplar directory for rubric metadata
         progress_context: Optional LFProgressContext for hierarchical progress tracking.
             Parent caller handles sub-task management; this function does not update progress.
@@ -379,7 +379,7 @@ def reconstruct_exemplar_database(
                     target_table=table_name,
                     source_db=source_db,
                     source_table=table_name,
-                    data_source_value=(f"carved_{db_name}" if output_type == "carved" else f"found_{db_name}"),
+                    data_source_value=(f"candidate_{db_name}" if output_type == "candidate" else f"found_{db_name}"),
                     exemplar_schemas_dir=(exemplar_db_dir / "schemas" / exemplar_name if exemplar_db_dir else None),
                     rubric_metadata=rubric_metadata,
                 )

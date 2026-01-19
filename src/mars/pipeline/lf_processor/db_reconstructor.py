@@ -1188,7 +1188,7 @@ def create_manifest_file(
 
     Args:
         output_path: Path where manifest.json should be created (e.g., catalog/Powerlog/Powerlog_manifest.json)
-        output_type: Type of output: "catalog", "metamatch", or "found_data"
+        output_type: Type of output: "candidate", "metamatch", or "found_data"
         output_name: Name of the output (e.g., "Powerlog", "itemtable_d57c0edb")
         source_databases: List of dicts with source DB info:
             - db_name: str
