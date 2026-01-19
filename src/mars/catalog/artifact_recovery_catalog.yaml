@@ -2,7 +2,7 @@
 catalog_metadata:
   version: 2.5.0
   created: "2025-05-16"
-  updated: "2026-01-14"
+  updated: "2026-01-19"
 
 skip_databases:
   geoservices:
@@ -100,6 +100,25 @@ apple_system_logs:
     description: Power management event logs in ASL format
     notes: Tracks power events, sleep/wake cycles
     exemplar_pattern: databases/catalog/Power Management ASL*
+
+auth_kit:
+  - name: Device List Database
+    glob_pattern: "Users/*/Library/Application Support/com.apple.akd/devicelist.db"
+    file_type: database
+    scope: user
+    description: User device database
+    ignorable_tables: ["version"]
+    notes: Device List
+    exemplar_pattern: databases/catalog/Device List Database*
+
+  - name: Authorization Database
+    glob_pattern: "Users/*/Library/Application Support/com.apple.akd/authorization.db"
+    file_type: database
+    scope: user
+    description: Auth database
+    ignorable_tables: ["version"]
+    notes: Authorization kit DB
+    exemplar_pattern: databases/catalog/Authorization Database*
 
 authentication:
   - name: Authentication Database
