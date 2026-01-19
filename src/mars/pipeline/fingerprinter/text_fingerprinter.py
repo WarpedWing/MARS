@@ -47,6 +47,9 @@ class LogType(Enum):
     GZIP_ARCHIVE = "gzip_archive"  # Compressed gzip file
     BZIP2_ARCHIVE = "bzip2_archive"  # Compressed bzip2 file
     KEYCHAIN = "keychain"  # macOS keychain file
+    # Time Machine extraction types (classified by ARC catalog, not fingerprinting)
+    TM_LOG = "tm_log"  # Log file from TM extraction (generic, not fingerprinted)
+    TM_CACHE = "tm_cache"  # Cache file from TM extraction (binary, not fingerprinted)
 
 
 @dataclass

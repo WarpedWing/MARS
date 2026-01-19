@@ -46,6 +46,8 @@ class RawFileProcessor:
         config: MARSConfig | None = None,
         paths: ProjectPaths | None = None,
         exemplar_db_dir: Path | None = None,
+        source_type: str = "candidate",
+        extraction_manifest: Path | None = None,
     ):
         """
         Initialize raw file processor.
@@ -55,9 +57,16 @@ class RawFileProcessor:
             config: Configuration object (optional, creates default if None)
             paths: ProjectPaths for output structure
             exemplar_db_dir: Path to exemplar scan output (for db_variant_selector)
+            source_type: Type of source being scanned. Options:
+                - "candidate": Carved/recovered files (default)
+                - "time_machine": Files extracted from Time Machine backup
+            extraction_manifest: Optional path to extraction manifest from TM scan.
+                When provided, file categorization trusts the manifest's classification.
         """
         self.input_dir = Path(input_dir)
         self.exemplar_db_dir = Path(exemplar_db_dir) if exemplar_db_dir else None
+        self.source_type = source_type
+        self.extraction_manifest = Path(extraction_manifest) if extraction_manifest else None
 
         # Handle config with backward compatibility
         if config is None:

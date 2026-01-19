@@ -34,6 +34,7 @@ from mars.cli.free_match import FreeMatchUI
 from mars.cli.plotter_ui import PlotterUI
 from mars.cli.settings_ui import SettingsUI
 from mars.cli.target_scan_ui import TargetScanUI
+from mars.cli.time_machine_ui import TimeMachineScanUI
 from mars.config import ConfigLoader
 from mars.pipeline.project.manager import MARSProject
 from mars.utils.compression_utils import (
@@ -1274,6 +1275,76 @@ class MARSCLI:
             sleep(0.5)
             return False
 
+        # Show scan type selection menu
+        return self._select_scan_type_and_run(exemplar_scan)
+
+    def _select_scan_type_and_run(self, exemplar_scan: dict) -> bool:
+        """Select scan type (Raw Files or Time Machine) and run.
+
+        Args:
+            exemplar_scan: Selected exemplar scan dictionary
+
+        Returns:
+            True if scan was completed, False if cancelled.
+        """
+        self.show_current_project_menu()
+
+        exemplar_display = exemplar_scan.get("description") or exemplar_scan["output_dir"]
+
+        self.console.print(
+            Panel(
+                f"[{BDSB1}]Select Scan Type[/{BDSB1}]\nExemplar: [cyan]{exemplar_display}[/cyan]",
+                title=f"[{BDSB1}]Candidates Scan[/{BDSB1}]",
+                border_style=f"{DSB3}",
+            )
+        )
+
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column(style=f"{BDSB1}", width=4)
+        table.add_column()
+
+        table.add_row(
+            "1.",
+            f"[{BDSB1}]Raw Files Scan[/{BDSB1}]         [grey69]Scan a folder of carved/recovered files[/grey69]",
+        )
+        table.add_row(
+            "2.",
+            f"[{BDSB1}]Time Machine Scan[/{BDSB1}]      [grey69]Scan Time Machine backup volume[/grey69]",
+        )
+        table.add_row("", "")
+        table.add_row("", "[dim](B)ack[/dim]")
+
+        self.console.print(
+            Panel(
+                table,
+                border_style="grey69",
+            )
+        )
+
+        choice = Prompt.ask(
+            "\n[bold cyan]Select scan type[/bold cyan]",
+            choices=["1", "2", "b"],
+            show_default=False,
+        ).lower()
+
+        if choice == "b":
+            return False
+        if choice == "1":
+            return self._run_raw_files_scan(exemplar_scan)
+        if choice == "2":
+            return self._run_time_machine_scan(exemplar_scan)
+
+        return False
+
+    def _run_raw_files_scan(self, exemplar_scan: dict) -> bool:
+        """Run raw files (carved) scan.
+
+        Args:
+            exemplar_scan: Selected exemplar scan dictionary
+
+        Returns:
+            True if scan was completed, False if cancelled.
+        """
         self.show_current_project_menu()
 
         target_path = browse_for_directory(
@@ -1289,6 +1360,57 @@ class MARSCLI:
 
         # Run the scanning workflow
         self._run_target_scan(target_path, exemplar_scan)
+        return True
+
+    def _run_time_machine_scan(self, exemplar_scan: dict) -> bool:
+        """Run Time Machine backup scan.
+
+        Args:
+            exemplar_scan: Selected exemplar scan dictionary
+
+        Returns:
+            True if scan was completed, False if cancelled.
+        """
+        from mars.utils.time_machine_utils import parse_backup_manifest
+
+        project = self.project
+        if project is None:
+            return False
+
+        # Initialize Time Machine UI
+        tm_ui = TimeMachineScanUI(self.console, project)
+
+        # Select Time Machine volume
+        tm_volume = tm_ui.select_tm_volume()
+        if tm_volume is None:
+            return False
+
+        # Parse manifest and get available backups
+        try:
+            backups = parse_backup_manifest(tm_volume / "backup_manifest.plist")
+        except Exception as e:
+            self.console.print(f"[bold red]Error reading backup manifest:[/bold red] {e}")
+            sleep(1)
+            return False
+
+        if not backups:
+            self.console.print("[yellow]No backups found in the selected volume.[/yellow]")
+            sleep(1)
+            return False
+
+        # Select backups to scan
+        selected_backups = tm_ui.select_backups(backups)
+        if not selected_backups:
+            return False
+
+        # Run the scan
+        tm_ui.run_scan(
+            tm_volume=tm_volume,
+            selected_backups=selected_backups,
+            exemplar_scan=exemplar_scan,
+            show_header_callback=self.show_current_project_menu,
+        )
+
         return True
 
     def _run_candidate_scan_with_imported_package(self) -> bool:

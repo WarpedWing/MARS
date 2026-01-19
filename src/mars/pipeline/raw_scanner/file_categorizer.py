@@ -129,6 +129,83 @@ class FileCategorizer:
         catalog_path = Path(__file__).parent.parent.parent / "catalog" / "artifact_recovery_catalog.yaml"
         self.wifi_mapper = CatalogWifiMapper(catalog_path)
 
+        # Load extraction manifest if available (for Time Machine scans)
+        self.extraction_manifest: dict[str, dict] | None = None
+        if processor.extraction_manifest and processor.extraction_manifest.exists():
+            from mars.pipeline.raw_scanner.tm_extractor import load_extraction_manifest
+
+            self.extraction_manifest = load_extraction_manifest(processor.extraction_manifest)
+            if self.extraction_manifest:
+                logger.debug(f"Loaded extraction manifest with {len(self.extraction_manifest)} entries")
+
+    def _classify_from_manifest(
+        self,
+        file_path: Path,
+        size: int,
+        file_created: datetime,
+        file_modified: datetime,
+        file_accessed: datetime,
+    ) -> RecoveredFile | None:
+        """
+        Classify a file using the extraction manifest.
+
+        For Time Machine scans, the manifest contains ARC-based classification
+        that we trust instead of fingerprinting.
+
+        Args:
+            file_path: Path to file
+            size: File size in bytes
+            file_created: File creation timestamp
+            file_modified: File modification timestamp
+            file_accessed: File access timestamp
+
+        Returns:
+            RecoveredFile if file found in manifest, None otherwise
+        """
+        if not self.extraction_manifest:
+            return None
+
+        # Look up file in manifest by relative path
+        try:
+            rel_path = str(file_path.relative_to(self.processor.input_dir))
+        except ValueError:
+            return None
+
+        manifest_entry = self.extraction_manifest.get(rel_path)
+        if not manifest_entry:
+            return None
+
+        artifact_type = manifest_entry.get("artifact_type", "")
+        artifact_name = manifest_entry.get("artifact_name", "")
+        backup_id = manifest_entry.get("backup_id", "")
+
+        # Map artifact_type to LogType
+        if artifact_type == "database":
+            log_type = LogType.SQLITE
+        elif artifact_type == "log":
+            log_type = LogType.TM_LOG
+        elif artifact_type == "cache":
+            log_type = LogType.TM_CACHE
+        else:
+            return None  # Unknown type, fall back to fingerprinting
+
+        # Compute MD5 for databases (needed for matching)
+        md5 = None
+        if log_type == LogType.SQLITE:
+            md5 = compute_md5_hash(file_path)
+
+        return RecoveredFile(
+            source_path=file_path,
+            file_type=log_type,
+            confidence=1.0,
+            size=size,
+            md5=md5,
+            reasons=[f"TM manifest: {artifact_name} from {backup_id}"],
+            file_created=file_created,
+            file_modified=file_modified,
+            file_accessed=file_accessed,
+        )
+
     def iter_input_files(self) -> list[Path]:
         """
         Find all files recursively in the input directory.
@@ -160,6 +237,9 @@ class FileCategorizer:
         """
         Classify a single file using fingerprinting.
 
+        For Time Machine scans with extraction manifest, trusts the ARC catalog's
+        classification instead of fingerprinting.
+
         Args:
             file_path: Path to file to classify
 
@@ -176,6 +256,14 @@ class FileCategorizer:
             file_created = datetime.fromtimestamp(birth_ts, UTC)
             file_modified = datetime.fromtimestamp(file_stat.st_mtime, UTC)
             file_accessed = datetime.fromtimestamp(file_stat.st_atime, UTC)
+
+            # Check extraction manifest first (for Time Machine scans)
+            if self.extraction_manifest:
+                manifest_result = self._classify_from_manifest(
+                    file_path, size, file_created, file_modified, file_accessed
+                )
+                if manifest_result is not None:
+                    return manifest_result
 
             # Check file extension to determine type
             file_lower = file_path.name.lower()
@@ -892,6 +980,42 @@ class FileCategorizer:
                 batch_stats["keychains_kept"] += 1
             except Exception as e:
                 logger.debug(f"Failed to copy keychain {file_path.name}: {e}")
+            return
+
+        # Handle Time Machine log files (classified by ARC catalog)
+        if classified_file.file_type == LogType.TM_LOG:
+            try:
+                # Preserve directory structure from TM extraction
+                rel_path = file_path.relative_to(self.processor.input_dir)
+                # Remove the "logs/" prefix if present since we're putting in logs dir
+                parts = rel_path.parts
+                if parts and parts[0] == "logs":
+                    rel_path = Path(*parts[1:]) if len(parts) > 1 else Path(file_path.name)
+                dest_path = self.processor.paths.logs / rel_path
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(file_path, dest_path)
+                batch_results["text_logs"].setdefault(classified_file.file_type, []).append(classified_file)
+                batch_stats["text_logs"] += 1
+            except Exception as e:
+                logger.debug(f"Failed to copy TM log {file_path.name}: {e}")
+            return
+
+        # Handle Time Machine cache files (classified by ARC catalog)
+        if classified_file.file_type == LogType.TM_CACHE:
+            try:
+                # Preserve directory structure from TM extraction
+                rel_path = file_path.relative_to(self.processor.input_dir)
+                # Remove the "caches/" prefix if present since we're putting in caches dir
+                parts = rel_path.parts
+                if parts and parts[0] == "caches":
+                    rel_path = Path(*parts[1:]) if len(parts) > 1 else Path(file_path.name)
+                dest_path = self.processor.paths.caches / rel_path
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(file_path, dest_path)
+                batch_results["other_files"].setdefault(classified_file.file_type, []).append(classified_file)
+                batch_stats["caches_kept"] = batch_stats.get("caches_kept", 0) + 1
+            except Exception as e:
+                logger.debug(f"Failed to copy TM cache {file_path.name}: {e}")
             return
 
         # Skip non-WiFi plists (we already handled PLIST_WIFI above)

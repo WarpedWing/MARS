@@ -288,6 +288,10 @@ def build_case_record(
     nearest: Sequence[Mapping[str, Any]] | None = None,
     verbosity: VerbosityLevel | None = None,
     file_timestamps: Mapping[str, str | None] | None = None,
+    # Time Machine provenance (optional)
+    tm_backup_date: str | None = None,
+    tm_original_path: str | None = None,
+    tm_artifact_name: str | None = None,
 ) -> dict[str, Any]:
     case = best.meta
     lf_tables = sorted(set(lf_tables_from_recover))
@@ -347,11 +351,24 @@ def build_case_record(
         }
         variant_scores_entries.append(entry)
 
+    # Build Time Machine provenance dict if any TM fields are set
+    tm_provenance: dict[str, str] | None = None
+    if tm_backup_date or tm_original_path or tm_artifact_name:
+        tm_provenance = {}
+        if tm_backup_date:
+            tm_provenance["backup_date"] = tm_backup_date
+        if tm_original_path:
+            tm_provenance["original_path"] = tm_original_path
+        if tm_artifact_name:
+            tm_provenance["artifact_name"] = tm_artifact_name
+
     record = {
         "type": "case",
         "case_path": case_path.as_posix(),
         # Original file timestamps (from source, not MARS processing time)
         "file_timestamps": file_timestamps or {},
+        # Time Machine provenance (only included if source is TM backup)
+        **({"tm_provenance": tm_provenance} if tm_provenance else {}),
         "chosen_variant": chosen_variant,
         "variant_chosen": best.tag,
         "decision": {

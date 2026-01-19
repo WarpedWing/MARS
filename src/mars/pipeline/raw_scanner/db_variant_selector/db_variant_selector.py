@@ -923,8 +923,11 @@ def main(
     dissect_stats = safe_stats.get_dissect_stats()
 
     # Critical warnings only (not verbose progress)
+    # Only warn about missing binary if there were recovered variants to potentially dissect
+    # For intact databases (like Time Machine extractions), R variants may not exist
     if (
         dissect_stats["total_matched"] > 0
+        and dissect_stats["has_recovered"] > 0
         and dissect_stats["dissect_attempted"] == 0
         and dissect_stats["binary_found"] == 0
     ):
