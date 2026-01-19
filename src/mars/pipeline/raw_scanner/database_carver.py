@@ -31,6 +31,7 @@ class DatabaseCarver:
         paths: ProjectPaths,
         stats: dict,
         config: MARSConfig | None = None,
+        source_type: str = "candidate",
     ):
         """
         Initialize the database carver.
@@ -39,10 +40,12 @@ class DatabaseCarver:
             paths: Project paths configuration
             stats: Statistics dictionary to update
             config: Configuration object (optional)
+            source_type: Type of source being scanned ("candidate" or "time_machine")
         """
         self.paths = paths
         self.stats = stats
         self.config = config
+        self.source_type = source_type
 
     def rename_carved_databases_with_match_hints(
         self,
@@ -178,7 +181,15 @@ class DatabaseCarver:
                     sqlite/
                         {filename}_carved.sqlite
                     {filename}_carved_protobufs.jsonl
+
+        Note: Carving is skipped for time_machine sources since TM databases
+        are intact copies, not carved fragments that need recovery.
         """
+        # Skip carving for Time Machine scans - databases are intact
+        if self.source_type == "time_machine":
+            logger.debug("Skipping carving for Time Machine scan (databases are intact)")
+            return
+
         from mars.carver.batch_carver import batch_carve_databases
 
         logger.debug("")

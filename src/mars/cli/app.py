@@ -183,7 +183,7 @@ class MARSCLI:
 ║    [navajo_white1]macOS Artifact Recovery Suite[/navajo_white1]    ║
 ║                                     ║
 ║           [grey42]WarpedWing Labs[/grey42]           ║
-║                [grey23]v1.0.3[/grey23]               ║
+║                [grey23]v1.1.0[/grey23]               ║
 ╚═════════════════════════════════════╝[/bold red3]
 """
         self.console.print(banner)
@@ -1378,7 +1378,7 @@ class MARSCLI:
             return False
 
         # Initialize Time Machine UI
-        tm_ui = TimeMachineScanUI(self.console, project)
+        tm_ui = TimeMachineScanUI(self.console, project, lambda: self.show_current_project_menu())
 
         # Select Time Machine volume
         tm_volume = tm_ui.select_tm_volume()

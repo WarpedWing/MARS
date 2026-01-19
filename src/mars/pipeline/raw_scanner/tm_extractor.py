@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from mars.pipeline.raw_scanner.arc_artifact_mapper import ARCArtifactMapper
 from mars.utils.debug_logger import logger
 from mars.utils.file_utils import FileTimestamps, compute_md5_hash, get_file_timestamps
 
@@ -187,6 +188,9 @@ def extract_artifacts_from_backup(
     if seen_hashes is None:
         seen_hashes = {}
 
+    # Create ARC mapper for semantic folder names
+    arc_mapper = ARCArtifactMapper()
+
     result = ExtractionResult(output_dir=output_dir)
 
     # Create output subdirectories
@@ -234,6 +238,7 @@ def extract_artifacts_from_backup(
                 artifact_name=artifact_name,
                 artifact_type=artifact_type,
                 seen_hashes=seen_hashes,
+                arc_mapper=arc_mapper,
                 preserve_structure=preserve_structure,
             )
 
@@ -258,6 +263,7 @@ def _extract_single_file(
     artifact_name: str,
     artifact_type: str,
     seen_hashes: dict[str, Path],
+    arc_mapper: ARCArtifactMapper,
     preserve_structure: bool = False,
 ) -> ExtractedArtifact | str | None:
     """
@@ -270,6 +276,7 @@ def _extract_single_file(
         artifact_name: Name of artifact from ARC catalog
         artifact_type: Type (database, cache, log)
         seen_hashes: Dict for deduplication tracking
+        arc_mapper: ARC artifact mapper for semantic folder names
         preserve_structure: If True, maintain full directory structure (for unified logs, etc.)
 
     Returns:
@@ -289,17 +296,37 @@ def _extract_single_file(
             logger.debug(f"Skipping duplicate: {source_path.name} (same as {seen_hashes[content_hash].name})")
             return None
 
-        # Determine output path
-        subdir = get_output_subdir(artifact_type)
+        # Determine output path using ARC mapper for semantic folder names
         relative_path = str(source_path.relative_to(backup.data_root))
-
-        # Use backup_id (full timestamp like 2026-01-19-131444) for unique directory naming
         backup_id = backup.backup_id
+        suffix = source_path.suffix
 
-        if preserve_structure:
+        # Try to get semantic folder info from ARC mapper
+        folder_info = arc_mapper.get_folder_info(artifact_name)
+
+        if folder_info and not preserve_structure:
+            # Use semantic folder structure from ARC catalog
+            # Output: databases/Safari History/History_2026-01-19-131444.db
+            type_prefix, folder_name, base_filename = folder_info
+            output_subdir = output_dir / type_prefix / folder_name
+            output_filename = f"{base_filename}_{backup_id}{suffix}"
+            output_path = output_subdir / output_filename
+            # Handle naming conflicts by adding a counter suffix
+            counter = 1
+            while output_path.exists():
+                output_filename = f"{base_filename}_{backup_id}_{counter}{suffix}"
+                output_path = output_subdir / output_filename
+                counter += 1
+        elif preserve_structure:
             # Maintain full directory structure (for unified logs, uuid text, etc.)
-            # Output: logs/{backup_id}/private/var/db/diagnostics/...
-            output_path = output_dir / subdir / backup_id / relative_path
+            # Try to get type prefix from mapper, fall back to artifact_type
+            if folder_info:
+                type_prefix, folder_name, _ = folder_info
+                # Output: logs/Unified Log (All Diagnostics)/private/var/db/diagnostics/...
+                output_path = output_dir / type_prefix / folder_name / backup_id / relative_path
+            else:
+                subdir = get_output_subdir(artifact_type)
+                output_path = output_dir / subdir / artifact_name / backup_id / relative_path
             # For preserve_structure, conflicts are unlikely but handle with counter
             counter = 1
             base_output_path = output_path
@@ -307,11 +334,11 @@ def _extract_single_file(
                 output_path = base_output_path.with_stem(f"{base_output_path.stem}_{counter}")
                 counter += 1
         else:
-            # Flatten to single directory with unique filename
-            # Output: databases/{backup_id}/{name}_{backup_id}.db
-            output_subdir = output_dir / subdir / backup_id
+            # Fallback: use artifact_name as folder (no ARC mapping available)
+            # Output: databases/Unknown Artifact/filename_2026-01-19-131444.db
+            subdir = get_output_subdir(artifact_type)
+            output_subdir = output_dir / subdir / artifact_name
             stem = source_path.stem
-            suffix = source_path.suffix
             output_filename = f"{stem}_{backup_id}{suffix}"
             output_path = output_subdir / output_filename
             # Handle naming conflicts by adding a counter suffix

@@ -125,7 +125,7 @@ class RawFileProcessor:
         # Initialize file categorizer and reporter
         self.categorizer = FileCategorizer(self)
         self.reporter = CategorizationReporter(self.stats)
-        self.database_carver = DatabaseCarver(self.paths, self.stats, self.config)
+        self.database_carver = DatabaseCarver(self.paths, self.stats, self.config, source_type=self.source_type)
 
         # Initialize cleanup utilities
         # Note: self.paths.root points to the candidate scan directory
@@ -230,6 +230,7 @@ class RawFileProcessor:
                 emit_nearest=True,
                 richConsole=richConsole,
                 sqlite_paths=sqlite_paths,
+                extraction_manifest_path=self.extraction_manifest,
             )
 
             # Parse results

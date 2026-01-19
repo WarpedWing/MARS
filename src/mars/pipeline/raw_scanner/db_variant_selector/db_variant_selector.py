@@ -100,6 +100,7 @@ from mars.pipeline.raw_scanner.db_variant_selector.variant_operations import (
     is_salvage_name,
     resolve_variant_priority,
 )
+from mars.pipeline.raw_scanner.tm_extractor import load_extraction_manifest
 
 
 # ==========================================================================
@@ -339,6 +340,8 @@ def _process_single_database(
     schemas_dir: Path | None,
     safe_stats: SafeStats,
     error_log: Path,
+    extraction_manifest: dict[str, dict] | None = None,
+    cases_dir: Path | None = None,
 ) -> dict | None:
     """
     Process a single database case and return the record to write to JSONL.
@@ -347,6 +350,10 @@ def _process_single_database(
     Returns a record dict to be written to JSONL otherwise.
 
     This function is thread-safe and can be called concurrently.
+
+    Args:
+        extraction_manifest: Optional TM extraction manifest for provenance lookup
+        cases_dir: Root cases directory for computing relative paths for manifest lookup
     """
     try:
         # Capture original file timestamps before any processing
@@ -531,6 +538,24 @@ def _process_single_database(
         should_compute_nearest = emit_nearest and (not exact_matches or bool(lf_tables_from_recover))
         nearest = nearest_by_tables(case, exemplars, k=5) if should_compute_nearest else None
 
+        # Look up TM provenance from extraction manifest (if available)
+        tm_backup_date: str | None = None
+        tm_original_path: str | None = None
+        tm_artifact_name: str | None = None
+
+        if extraction_manifest and cases_dir:
+            # Compute relative path from cases_dir to look up in manifest
+            try:
+                rel_path = str(case_path.relative_to(cases_dir))
+                manifest_entry = extraction_manifest.get(rel_path)
+                if manifest_entry:
+                    tm_backup_date = manifest_entry.get("backup_date")
+                    tm_original_path = manifest_entry.get("original_path")
+                    tm_artifact_name = manifest_entry.get("artifact_name")
+            except ValueError:
+                # case_path not relative to cases_dir, skip manifest lookup
+                pass
+
         record = build_case_record(
             case_path=case_path,
             best=best,
@@ -550,6 +575,9 @@ def _process_single_database(
             dissect_rebuilt_path=dissect_rebuilt_path,
             nearest=nearest,
             file_timestamps=file_timestamps,
+            tm_backup_date=tm_backup_date,
+            tm_original_path=tm_original_path,
+            tm_artifact_name=tm_artifact_name,
         )
 
         if empty_bool and best.tag == "O":
@@ -580,6 +608,7 @@ def main(
     emit_nearest: bool = True,
     richConsole=None,  # rich.console.Console | None (avoid import at module level)
     sqlite_paths: list[Path] | None = None,
+    extraction_manifest_path: Path | None = None,
 ):
     """
     Main entry point for db_variant_selector.
@@ -596,6 +625,7 @@ def main(
         emit_nearest: Include top-5 nearest exemplars in output (default: True)
         richConsole: Optional Rich console for progress display
         sqlite_paths: Optional pre-scanned list of SQLite paths (skips filesystem scan)
+        extraction_manifest_path: Optional path to TM extraction manifest for provenance tracking
     """
 
     # Resolve paths
@@ -603,6 +633,13 @@ def main(
     cases_dir = cases_dir.resolve()
     variants_root = variants_dir.resolve()
     results_path = results_path.resolve()
+
+    # Load extraction manifest for TM provenance tracking (if provided)
+    extraction_manifest: dict[str, dict] | None = None
+    if extraction_manifest_path:
+        extraction_manifest = load_extraction_manifest(extraction_manifest_path)
+        if extraction_manifest:
+            logger.debug(f"Loaded extraction manifest with {len(extraction_manifest)} entries")
 
     # Point to src/ directory for resource lookup
     script_dir = (
@@ -820,6 +857,8 @@ def main(
                         schemas_dir,
                         safe_stats,
                         error_log,
+                        extraction_manifest,
+                        cases_dir,
                     ): case_path
                     for case_path in cases
                 }
@@ -889,6 +928,8 @@ def main(
                     schemas_dir,
                     safe_stats,
                     error_log,
+                    extraction_manifest,
+                    cases_dir,
                 ): case_path
                 for case_path in cases
             }

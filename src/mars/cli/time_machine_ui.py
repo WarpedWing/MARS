@@ -28,7 +28,6 @@ from rich.table import Table
 
 from mars.config import ConfigLoader
 from mars.pipeline.raw_scanner.tm_extractor import (
-    extract_from_multiple_backups,
     get_extraction_summary,
     load_artifact_catalog,
     write_extraction_manifest,
@@ -54,7 +53,7 @@ BDSB1 = "bold deep_sky_blue1"
 class TimeMachineScanUI:
     """UI for scanning Time Machine backups."""
 
-    def __init__(self, console: Console, project: MARSProject):
+    def __init__(self, console: Console, project: MARSProject, show_current_project_menu: Callable):
         """
         Initialize Time Machine Scan UI.
 
@@ -64,6 +63,7 @@ class TimeMachineScanUI:
         """
         self.console = console
         self.project = project
+        self.show_current_project_menu = show_current_project_menu
 
     def select_tm_volume(self) -> Path | None:
         """
@@ -75,10 +75,11 @@ class TimeMachineScanUI:
         from mars.cli.explorer import browse_for_directory
 
         # Browse for directory
+        self.show_current_project_menu()
         selected = browse_for_directory(
             start_path=Path("/Volumes"),
             title="Select Time Machine Backup Volume",
-            explanation="Navigate to the mounted Time Machine backup drive",
+            explanation="Select the Time Machine backup drive (contains backup_manifest.plist).",
         )
 
         if selected is None:
@@ -109,15 +110,17 @@ class TimeMachineScanUI:
         Returns:
             List of selected backups, or None if cancelled
         """
+        self.show_current_project_menu()
         if not backups:
             self.console.print("[bold red]No backups found in the selected volume.[/bold red]")
             return None
 
         # Display available backups
         table = Table(
-            title="[bold cyan]Available Time Machine Backups[/bold cyan]",
+            title="[bold deep_sky_blue1]Available Time Machine Backups[/bold deep_sky_blue1]",
             show_header=True,
             header_style="bold",
+            border_style="deep_sky_blue3",
         )
         table.add_column("#", style="dim", width=4)
         table.add_column("Date", style="cyan")
@@ -399,7 +402,21 @@ class TimeMachineScanUI:
         output_dir: Path,
         catalog: dict,
     ):
-        """Extract artifacts with progress display."""
+        """Extract artifacts with two-level progress display.
+
+        Shows both:
+        - Backup level: "Processing backup 1/3: 2026-01-19 13:46"
+        - Artifact level: "Scanning: Safari History (45/156)"
+        """
+        from mars.pipeline.raw_scanner.tm_extractor import (
+            ExtractionResult,
+            extract_artifacts_from_backup,
+            iter_catalog_entries,
+        )
+
+        # Count total catalog entries for artifact progress
+        total_entries = len(list(iter_catalog_entries(catalog)))
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -408,24 +425,58 @@ class TimeMachineScanUI:
             TimeElapsedColumn(),
             console=self.console,
         ) as progress:
-            task = progress.add_task(
-                f"Extracting from {len(backups)} backup(s)...",
+            # Outer task: backup level
+            backup_task = progress.add_task(
+                f"Processing {len(backups)} backup(s)...",
                 total=len(backups),
             )
-
-            def update_progress(current: int, total: int, message: str) -> None:
-                progress.update(task, completed=current, description=message)
-
-            result = extract_from_multiple_backups(
-                backups=backups,
-                output_dir=output_dir,
-                catalog=catalog,
-                progress_callback=update_progress,
+            # Inner task: artifact level (within each backup)
+            artifact_task = progress.add_task(
+                "Initializing...",
+                total=total_entries,
+                visible=True,
             )
 
-            progress.update(task, completed=len(backups))
+            # Shared hash dict for cross-backup deduplication
+            seen_hashes: dict[str, Path] = {}
+            combined = ExtractionResult(output_dir=output_dir)
+            total_backups = len(backups)
 
-        return result
+            for idx, backup in enumerate(backups):
+                backup_label = backup.backup_date.strftime("%Y-%m-%d %H:%M")
+                progress.update(
+                    backup_task,
+                    completed=idx,
+                    description=f"Backup {idx + 1}/{total_backups}: {backup_label}",
+                )
+                # Reset artifact progress for each backup
+                progress.update(artifact_task, completed=0)
+
+                def update_artifact_progress(current: int, total: int, message: str) -> None:
+                    progress.update(
+                        artifact_task,
+                        completed=current,
+                        total=total,
+                        description=message,
+                    )
+
+                result = extract_artifacts_from_backup(
+                    backup=backup,
+                    output_dir=output_dir,
+                    catalog=catalog,
+                    progress_callback=update_artifact_progress,
+                    seen_hashes=seen_hashes,
+                )
+
+                combined.artifacts.extend(result.artifacts)
+                combined.skipped_duplicates += result.skipped_duplicates
+                combined.extraction_errors.extend(result.extraction_errors)
+
+            # Mark both tasks complete
+            progress.update(backup_task, completed=len(backups), description="All backups extracted")
+            progress.update(artifact_task, completed=total_entries, description="Extraction complete")
+
+        return combined
 
     def _display_results(
         self,
@@ -469,3 +520,31 @@ class TimeMachineScanUI:
         if by_type:
             type_parts = [f"{t}: {c}" for t, c in sorted(by_type.items())]
             self.console.print(f"\n[dim]Artifacts by type: {', '.join(type_parts)}[/dim]")
+
+        # Generate HTML report
+        if run_dir:
+            from mars.cli.scan_report_generator import ScanReportGenerator
+
+            # Build combined stats for report
+            stats = {
+                "sqlite_dbs_found": candidate_stats.get("total_found", 0),
+                "sqlite_dbs_matched": candidate_stats.get("matched", 0),
+                "sqlite_dbs_matched_nonempty": candidate_stats.get("matched_nonempty", 0),
+                "sqlite_dbs_unmatched": candidate_stats.get("unmatched", 0),
+                "tm_artifacts_extracted": extraction_summary.get("total_extracted", 0),
+                "tm_duplicates_skipped": extraction_summary.get("skipped_duplicates", 0),
+                "tm_by_type": extraction_summary.get("by_type", {}),
+            }
+
+            report_gen = ScanReportGenerator(
+                project_root=self.project.project_dir,
+                project_name=self.project.config.get("project_name", "Unknown"),
+            )
+            report_gen.generate_candidate_report(
+                stats=stats,
+                processor_stats=processor_stats,
+                run_dir=run_dir,
+                output_dir=run_dir,
+                description="Time Machine Backup Scan",
+                console=self.console,
+            )
