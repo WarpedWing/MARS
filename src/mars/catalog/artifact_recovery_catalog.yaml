@@ -2,7 +2,7 @@
 catalog_metadata:
   version: 2.5.0
   created: "2025-05-16"
-  updated: "2026-01-19"
+  updated: "2026-01-20"
 
 skip_databases:
   geoservices:
