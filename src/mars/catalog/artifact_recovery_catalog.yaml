@@ -102,6 +102,15 @@ apple_system_logs:
     exemplar_pattern: databases/catalog/Power Management ASL*
 
 auth_kit:
+  - name: AuthKit Database
+    glob_pattern: "Users/*/Library/Application Support/com.apple.akd/authorization.db"
+    file_type: database
+    scope: user
+    description: AuthKit database
+    ignorable_tables: ["version"]
+    notes: Authorization kit DB
+    exemplar_pattern: databases/catalog/AuthKit Database*
+
   - name: Device List Database
     glob_pattern: "Users/*/Library/Application Support/com.apple.akd/devicelist.db"
     file_type: database
@@ -110,15 +119,6 @@ auth_kit:
     ignorable_tables: ["version"]
     notes: Device List
     exemplar_pattern: databases/catalog/Device List Database*
-
-  - name: Authorization Database
-    glob_pattern: "Users/*/Library/Application Support/com.apple.akd/authorization.db"
-    file_type: database
-    scope: user
-    description: Auth database
-    ignorable_tables: ["version"]
-    notes: Authorization kit DB
-    exemplar_pattern: databases/catalog/Authorization Database*
 
 authentication:
   - name: Authentication Database
