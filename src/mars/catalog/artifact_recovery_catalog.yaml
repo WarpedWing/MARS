@@ -855,7 +855,7 @@ network_preferences:
 
 network_usage:
   - name: Network Usage Database
-    glob_pattern: "private/var/networkd/**/netusage.sqlite"
+    glob_pattern: "private/var/networkd/db/netusage.sqlite"
     file_type: database
     scope: system
     description: Network data usage tracking by process
