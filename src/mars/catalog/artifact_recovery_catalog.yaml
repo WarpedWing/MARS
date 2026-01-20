@@ -858,9 +858,10 @@ network_usage:
     glob_pattern: "private/var/networkd/db/netusage.sqlite"
     file_type: database
     scope: system
+    tm_only: true
     description: Network data usage tracking by process
     ignorable_tables: []
-    notes: Tracks data usage per application and process
+    notes: Tracks data usage per application and process. Only available in TM backups.
     exemplar_pattern: databases/catalog/Network Usage Database*
 
 notes:
