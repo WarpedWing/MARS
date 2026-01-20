@@ -308,6 +308,16 @@ class TimeMachineScanUI:
 
             if summary["extraction_errors"]:
                 self.console.print(f"[yellow]Extraction errors: {summary['extraction_errors']}[/yellow]")
+                # Show details of permission errors
+                permission_errors = [(p, e) for p, e in extraction_result.extraction_errors if "Permission denied" in e]
+                if permission_errors:
+                    self.console.print(
+                        f"[yellow]  └─ {len(permission_errors)} files require elevated permissions (run with sudo)[/yellow]"
+                    )
+                    for path, _error in permission_errors[:3]:
+                        self.console.print(f"[dim]     • {path.name}[/dim]")
+                    if len(permission_errors) > 3:
+                        self.console.print(f"[dim]     • ... and {len(permission_errors) - 3} more[/dim]")
 
             # Phase 2: Run candidate pipeline on extracted files
             self.console.print(

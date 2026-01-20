@@ -552,9 +552,20 @@ def _process_single_database(
                     tm_backup_date = manifest_entry.get("backup_date")
                     tm_original_path = manifest_entry.get("original_path")
                     tm_artifact_name = manifest_entry.get("artifact_name")
-            except ValueError:
+                    logger.debug(f"Found manifest entry for {rel_path}: original_path={tm_original_path}")
+                else:
+                    # Debug: Show first few manifest keys for comparison
+                    sample_keys = list(extraction_manifest.keys())[:3]
+                    logger.debug(f"No manifest entry for '{rel_path}' (sample keys: {sample_keys})")
+            except ValueError as e:
                 # case_path not relative to cases_dir, skip manifest lookup
-                pass
+                logger.debug(
+                    f"Could not compute relative path: case_path={case_path}, cases_dir={cases_dir}, error={e}"
+                )
+        else:
+            logger.debug(
+                f"TM provenance lookup skipped: extraction_manifest={extraction_manifest is not None}, cases_dir={cases_dir}"
+            )
 
         record = build_case_record(
             case_path=case_path,
@@ -637,9 +648,14 @@ def main(
     # Load extraction manifest for TM provenance tracking (if provided)
     extraction_manifest: dict[str, dict] | None = None
     if extraction_manifest_path:
+        logger.debug(f"Loading extraction manifest from: {extraction_manifest_path}")
         extraction_manifest = load_extraction_manifest(extraction_manifest_path)
         if extraction_manifest:
             logger.debug(f"Loaded extraction manifest with {len(extraction_manifest)} entries")
+        else:
+            logger.debug("Failed to load extraction manifest (returned None)")
+    else:
+        logger.debug("No extraction_manifest_path provided")
 
     # Point to src/ directory for resource lookup
     script_dir = (

@@ -467,8 +467,8 @@ class ExemplarScanner:
                     if db_def.get("scope") == "user" or "Users/*/" in glob_pattern:
                         logger.debug(f"    [USER] scope=user, user_dirs={len(user_dirs)}")
                         for user_dir in user_dirs:
-                            # Include leading slash in replace to avoid absolute path issue
-                            user_relative_path = glob_pattern.replace("/Users/*/", "")
+                            # Handle both "/Users/*/" and "Users/*/" patterns (with and without leading slash)
+                            user_relative_path = glob_pattern.replace("/Users/*/", "").replace("Users/*/", "")
                             user_candidate = user_dir / user_relative_path
                             logger.debug(f"    [USER] candidate: {user_candidate}")
                             direct_candidates.append(user_candidate)

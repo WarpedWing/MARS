@@ -65,7 +65,7 @@ class TimeMachineBackup:
         """
         name = self.backup_path.name
         # Remove common suffixes
-        for suffix in (".previous", ".inprogress", ".inProgress"):
+        for suffix in (".previous", ".inprogress", ".inProgress", ".backup"):
             if name.endswith(suffix):
                 name = name[: -len(suffix)]
                 break
@@ -178,7 +178,7 @@ def _find_backup_directories(tm_volume: Path) -> dict[str, Path]:
     backup_dirs: dict[str, Path] = {}
 
     for item in tm_volume.iterdir():
-        if item.is_dir() and item.name.endswith((".previous", ".inProgress")):
+        if item.is_dir() and item.name.endswith((".previous", ".inProgress", ".backup")):
             # Extract date portion without suffix
             stem = item.name.rsplit(".", 1)[0]
             backup_dirs[stem] = item
