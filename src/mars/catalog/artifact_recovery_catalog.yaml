@@ -429,16 +429,6 @@ coreroutine:
       ZCKRECORDSYSTEMFIELDS) for cross-device correlation.
     exemplar_pattern: databases/catalog/CoreRoutine Cloud*
 
-devices:
-  - name: Device List
-    glob_pattern: "/Users/*/Library/Application Support/com.apple.akd/devicelist.db"
-    file_type: database
-    description: Device list database used by Apple Keychain Daemon
-    ignorable_tables: []
-    scope: user
-    notes: SQLite database containing device information
-    exemplar_pattern: databases/catalog/Device List*
-
 dhcp_lease:
   - name: DHCP Leases
     glob_pattern: "private/var/db/dhcpclient/leases/*"
