@@ -910,6 +910,48 @@ class LFOrchestrator:
         """Quote a SQL identifier to handle special characters."""
         return f'"{identifier.replace(chr(34), chr(34) + chr(34))}"'
 
+    def _get_artifact_name_from_path(self, case_path: str) -> str | None:
+        """Extract artifact name from case path folder structure.
+
+        For TM scans, databases are organized as:
+        tm_extracted/databases/Network Usage Database/netusage.db
+
+        Returns:
+            Artifact name from folder structure, or None if not found
+        """
+        if not case_path:
+            return None
+        # Path like: tm_extracted/databases/Network Usage Database/netusage.db
+        parts = Path(case_path).parts
+        for i, part in enumerate(parts):
+            if part == "databases" and i + 1 < len(parts):
+                return parts[i + 1]
+        return None
+
+    def _is_tm_only_artifact(self, artifact_name: str) -> bool:
+        """Check if artifact is marked as tm_only in the catalog.
+
+        TM-only artifacts (like netusage.sqlite) only exist in Time Machine
+        backups and never on live systems, so no exemplar can be generated.
+        These should be routed directly to catalog without exemplar matching.
+
+        Args:
+            artifact_name: Name of the artifact to check
+
+        Returns:
+            True if artifact is marked as tm_only in catalog
+        """
+        from mars.pipeline.raw_scanner.tm_extractor import load_artifact_catalog
+
+        catalog = load_artifact_catalog()
+        for category, entries in catalog.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if entry.get("name") == artifact_name and entry.get("tm_only"):
+                    return True
+        return False
+
     def _group_databases_for_lf_processing(self, databases_with_lf: list[dict]) -> dict:
         """
         Group databases with lost_and_found tables for processing.
@@ -935,6 +977,13 @@ class LFOrchestrator:
         individual = []
 
         for record in databases_with_lf:
+            # Check for TM-only artifact first (route directly to catalog)
+            # These artifacts only exist in TM backups and have no exemplar to match
+            artifact_name = self._get_artifact_name_from_path(record.get("case_path", ""))
+            if artifact_name and self._is_tm_only_artifact(artifact_name):
+                catalog_groups[artifact_name].append(record)
+                continue
+
             # Check for exact catalog match first (highest priority)
             decision = record.get("decision", {})
             is_matched = decision.get("matched", False)
