@@ -825,6 +825,16 @@ messages:
     file_type: cache
     exemplar_pattern: caches/Messages Attachments*
 
+# mobile_sync:
+#   - name: MobileSync Backup
+#     glob_pattern: "Users/*/Library/Application Support/MobileSync/Backup/**/*"
+#     file_type: cache
+#     preserve_structure: true
+#     scope: user
+#     description: iOS device backups created by Finder/iTunes
+#     notes: Contains full filesystem backups of paired iOS devices
+#     exemplar_pattern: caches/MobileSync Backup*
+
 network_interfaces:
   - name: Network Hardware Interfaces (context)
     glob_pattern: "Library/Preferences/SystemConfiguration/NetworkInterfaces*.plist"
@@ -1195,6 +1205,16 @@ unified_logs:
     notes:
       Captures all diagnostic files beyond just tracev3. Structure preserved for logarchive parsers.
     exemplar_pattern: logs/Unified Log (All Diagnostics)*
+
+user_data:
+  - name: User Data
+    scope: user
+    file_type: log
+    glob_pattern: "private/var/db/dslocal/nodes/Default/**/*"
+    preserve_structure: true
+    description: User metadata
+    notes: User plist
+    exemplar_pattern: logs/User Data*
 
 uuid_text:
   - name: UUID Text
