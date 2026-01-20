@@ -222,21 +222,14 @@ def _validate_row_against_rubric(
 
         # Validate text_only role - reject non-string values in TEXT columns
         # This prevents integers/floats/bytes from being coerced into text-only columns
-        # L&F tables may store values as BLOBs, which come as bytes - also reject those
-        # Also reject string values that are purely numeric (e.g., "139" instead of "processOutgoingQueue")
+        # L&F tables may store values as BLOBs, which come as bytes - try to decode them
+        # Note: Numeric strings are now allowed as they're common in real data
         if "text_only" in roles:
             if isinstance(val, bytes):
                 # Try to decode BLOB as UTF-8 to see what's inside
                 try:
-                    decoded = val.decode("utf-8")
-                    # If it decodes to a number string, it's not valid text
-                    if decoded.lstrip("-").replace(".", "").isdigit():
-                        return (
-                            False,
-                            f"{col}={decoded} (BLOB contains numeric string in text_only column)",
-                        )
-                    # Otherwise accept the decoded string value
-                    # Note: we can't modify val here, so this is just for validation
+                    val.decode("utf-8")
+                    # Successfully decoded - accept the value (including numeric strings)
                 except UnicodeDecodeError:
                     return (
                         False,
@@ -247,12 +240,8 @@ def _validate_row_against_rubric(
                     False,
                     f"{col}={val} (text_only column requires string value, got {type(val).__name__})",
                 )
-            elif val.lstrip("-").replace(".", "").isdigit():
-                # Reject string values that are purely numeric
-                return (
-                    False,
-                    f"{col}={val} (text_only column contains numeric string)",
-                )
+            # Note: Numeric strings (e.g., "139", "163.5") are now allowed in text_only columns
+            # as they're common in real-world data and the previous check caused false rejections
 
     return True, None
 
@@ -666,7 +655,7 @@ def insert_lf_data_into_table(
         source_lf_db: Path to split database with LF tables
         source_lf_tables: List of LF table names to combine (e.g., ["lf_table_1", "lf_table_5"])
         column_mapping: Dict mapping LF columns to target columns (e.g., {"c0": "id", "c1": "name"})
-        data_source_value: Value to use for data_source column ("found", "carved")
+        data_source_value: Value to use for data_source column ("found", "candidate")
         rubric_metadata: Optional pre-loaded rubric metadata dict for validation
 
     Returns:

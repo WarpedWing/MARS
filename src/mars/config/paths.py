@@ -94,6 +94,9 @@ class ProjectPaths:
     db_carved: Path
     """Carved databases (forensic carving output)"""
 
+    db_encrypted: Path
+    """Encrypted databases that cannot be processed"""
+
     # Artifact directories
     logs: Path
     """Text log files (wifi.log, system.log, etc.)"""
@@ -116,6 +119,7 @@ class ProjectPaths:
             "db_metamatches": databases_dir / "metamatches",
             "db_schemas": databases_dir / "schemas",
             "db_carved": databases_dir / "carved",
+            "db_encrypted": databases_dir / "encrypted",
         }
 
     @staticmethod
@@ -214,6 +218,7 @@ class ProjectPaths:
             db_metamatches=db_paths["db_metamatches"],
             db_schemas=db_paths["db_schemas"],
             db_carved=db_paths["db_carved"],
+            db_encrypted=db_paths["db_encrypted"],
         )
 
     @classmethod
@@ -286,6 +291,7 @@ class ProjectPaths:
             db_metamatches=db_paths["db_metamatches"],
             db_schemas=db_paths["db_schemas"],
             db_carved=db_paths["db_carved"],
+            db_encrypted=db_paths["db_encrypted"],
         )
 
     @classmethod
@@ -360,6 +366,7 @@ class ProjectPaths:
             db_metamatches=db_paths["db_metamatches"],
             db_schemas=db_paths["db_schemas"],
             db_carved=db_paths["db_carved"],
+            db_encrypted=db_paths["db_encrypted"],
         )
 
     def create_all(self) -> None:
@@ -448,6 +455,7 @@ class ProjectPaths:
             self.db_catalog,
             self.db_metamatches,
             self.db_schemas,
+            self.db_encrypted,
         ]
 
     def clean_temp(self) -> None:

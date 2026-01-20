@@ -1066,3 +1066,142 @@ class OutputStructure:
 
             # Optional: Log the creation
             # logger.info(f"  Created {provenance_path.relative_to(self.root)}")
+
+
+def _find_logarchive_root(folder: Path, expected_subdir: str) -> Path | None:
+    """
+    Find the actual root containing logarchive data.
+
+    For TM extractions, the structure may be nested like:
+    folder/private/var/db/diagnostics/{Persist,Signpost,Special,timesync}
+
+    This finds the deepest folder containing the expected_subdir.
+
+    Args:
+        folder: Starting folder to search
+        expected_subdir: Name of expected subdirectory (e.g., "diagnostics", "uuidtext")
+
+    Returns:
+        Path to the folder containing the expected_subdir, or None if not found
+    """
+    # Direct match at folder level
+    if (folder / expected_subdir).exists():
+        return folder
+
+    # Search nested structures (TM extraction may have private/var/db/... prefix)
+    for subdir in folder.rglob(expected_subdir):
+        if subdir.is_dir():
+            return subdir.parent
+
+    return None
+
+
+def create_logarchive_from_logs(
+    logs_dir: Path,
+    archive_name: str = "system",
+    unified_log_folder: str = "Unified Log (All Diagnostics)",
+    uuid_text_folder: str = "UUID Text",
+) -> Path | None:
+    """
+    Create a .logarchive bundle from Unified Logs and UUID Text folders.
+
+    This is a standalone utility function that can create a logarchive from any
+    logs directory (works for both exemplar and candidate scans).
+
+    A .logarchive is a directory structure that macOS log tools (like `log show`)
+    can read directly. It requires the tracev3 files from diagnostics plus the
+    UUID text files for symbol resolution.
+
+    This function:
+    1. Finds the actual diagnostics and uuidtext directories (handling nested TM structures)
+    2. Creates a flat logarchive with all content at the root level
+    3. Removes the source folders after successful creation
+
+    Args:
+        logs_dir: Base logs directory (e.g., candidate_paths.logs)
+        archive_name: Name for the logarchive (without .logarchive extension)
+        unified_log_folder: Name of the Unified Log folder
+        uuid_text_folder: Name of the UUID Text folder
+
+    Returns:
+        Path to the created .logarchive, or None if creation failed
+    """
+    unified_path = logs_dir / unified_log_folder
+    uuid_path = logs_dir / uuid_text_folder
+
+    # Check if Unified Log folder exists
+    if not unified_path.exists():
+        logger.debug(f"Unified Log folder not found: {unified_path}")
+        return None
+
+    archive_full_name = f"{archive_name}.logarchive"
+    archive_path = logs_dir / archive_full_name
+
+    try:
+        # Remove existing archive if present (from previous run)
+        if archive_path.exists():
+            shutil.rmtree(archive_path)
+
+        # Create the logarchive directory
+        archive_path.mkdir(parents=True, exist_ok=True)
+
+        # Find the actual diagnostics directory (may be nested from TM extraction)
+        diagnostics_root = _find_logarchive_root(unified_path, "diagnostics")
+
+        if diagnostics_root and (diagnostics_root / "diagnostics").exists():
+            # Move contents of diagnostics/ to archive root (Persist, Signpost, Special, timesync)
+            diagnostics_dir = diagnostics_root / "diagnostics"
+            for item in diagnostics_dir.iterdir():
+                if item.name in (".DS_Store", ".localized"):
+                    continue
+                dest = archive_path / item.name
+                if not dest.exists():
+                    shutil.move(str(item), str(dest))
+            logger.debug("Moved diagnostics content to logarchive")
+        else:
+            # Exemplar-style structure: contents already at unified_path root
+            for item in unified_path.iterdir():
+                if item.name in (".DS_Store", ".localized"):
+                    continue
+                dest = archive_path / item.name
+                if not dest.exists():
+                    shutil.move(str(item), str(dest))
+            logger.debug("Moved unified log content to logarchive (exemplar style)")
+
+        # Handle UUID Text folder if it exists
+        if uuid_path.exists():
+            # Find the actual uuidtext directory (may be nested from TM extraction)
+            uuidtext_root = _find_logarchive_root(uuid_path, "uuidtext")
+
+            if uuidtext_root and (uuidtext_root / "uuidtext").exists():
+                # Move contents of uuidtext/ to archive root (hex folders like 0A, 0B, etc.)
+                uuidtext_dir = uuidtext_root / "uuidtext"
+                for item in uuidtext_dir.iterdir():
+                    if item.name in (".DS_Store", ".localized"):
+                        continue
+                    dest = archive_path / item.name
+                    if not dest.exists():
+                        shutil.move(str(item), str(dest))
+                logger.debug("Moved uuidtext content to logarchive")
+            else:
+                # Exemplar-style structure: contents already at uuid_path root
+                for item in uuid_path.iterdir():
+                    if item.name in (".DS_Store", ".localized"):
+                        continue
+                    dest = archive_path / item.name
+                    if not dest.exists():
+                        shutil.move(str(item), str(dest))
+                logger.debug("Moved UUID text content to logarchive (exemplar style)")
+
+            # Remove UUID Text folder
+            shutil.rmtree(uuid_path, ignore_errors=True)
+
+        # Remove the original Unified Log folder
+        shutil.rmtree(unified_path, ignore_errors=True)
+
+        logger.debug(f"Created logarchive: {archive_path.name}")
+        return archive_path
+
+    except Exception as e:
+        logger.warning(f"Failed to create logarchive: {e}")
+        return None

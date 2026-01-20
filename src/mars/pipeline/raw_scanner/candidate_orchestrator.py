@@ -234,12 +234,15 @@ class RawFileProcessor:
             )
 
             # Parse results
+            logger.debug(f"Looking for results at: {results_path}")
             if results_path.exists():
+                logger.debug("Results file exists, parsing...")
                 with results_path.open() as f:
                     for line in f:
                         record = json.loads(line)
                         if record.get("type") == "header":
                             self.stats["sqlite_dbs_found"] = record.get("cases_scanned", 0)
+                            logger.debug(f"Found header: cases_scanned={self.stats['sqlite_dbs_found']}")
                         elif record.get("type") == "case":
                             decision = record.get("decision", {})
                             if decision.get("matched"):
@@ -249,6 +252,8 @@ class RawFileProcessor:
                                     self.stats["sqlite_dbs_matched_nonempty"] += 1
                             else:
                                 self.stats["sqlite_dbs_unmatched"] += 1
+            else:
+                logger.warning(f"Results file does not exist: {results_path}")
 
             logger.debug(
                 f"SQLite processing complete: {self.stats['sqlite_dbs_found']} found, "

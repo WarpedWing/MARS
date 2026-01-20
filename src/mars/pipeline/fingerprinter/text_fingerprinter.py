@@ -50,6 +50,7 @@ class LogType(Enum):
     # Time Machine extraction types (classified by ARC catalog, not fingerprinting)
     TM_LOG = "tm_log"  # Log file from TM extraction (generic, not fingerprinted)
     TM_CACHE = "tm_cache"  # Cache file from TM extraction (binary, not fingerprinted)
+    TM_KEYCHAIN = "tm_keychain"  # Keychain file from TM extraction
 
 
 @dataclass

@@ -337,7 +337,9 @@ def reconstruct_exemplar_database(
     for entry_idx, entry in enumerate(db_entries, 1):
         db_name = entry["db_name"]
         source_db = entry["source_db"]
-        intact_rows_per_source[db_name] = 0
+        # Initialize only if not already seen (handles duplicate db_name entries)
+        if db_name not in intact_rows_per_source:
+            intact_rows_per_source[db_name] = 0
 
         if not source_db or not source_db.exists():
             continue
@@ -456,10 +458,14 @@ def reconstruct_exemplar_database(
     # after all phases complete. This ensures each LF table appears in exactly
     # one location (either matched to an exemplar or in found_data/ as orphan).
 
-    # Create manifest file
+    # Create manifest file (deduplicated by db_name)
     source_db_list = []
+    seen_db_names: set[str] = set()
     for entry in db_entries:
         db_name = entry["db_name"]
+        if db_name in seen_db_names:
+            continue  # Skip duplicate entries
+        seen_db_names.add(db_name)
         source_info = {
             "db_name": db_name,
             "intact_rows": intact_rows_per_source.get(db_name, 0),

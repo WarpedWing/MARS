@@ -50,6 +50,7 @@ from mars.utils.compression_utils import (
     get_compression_type,
     read_compressed_with_recovery,
 )
+from mars.utils.database_utils import is_encrypted_database
 from mars.utils.debug_logger import logger
 from mars.utils.file_utils import compute_md5_hash
 
@@ -138,6 +139,31 @@ class FileCategorizer:
             if self.extraction_manifest:
                 logger.debug(f"Loaded extraction manifest with {len(self.extraction_manifest)} entries")
 
+    def _should_ignore_file(self, file_path: Path) -> bool:
+        """
+        Check if a file should be ignored.
+
+        For Time Machine scans with extraction manifest, only filter macOS metadata
+        files, not extensions (to include message attachments like images/videos).
+
+        For regular candidate scans, use full config-based filtering.
+        """
+        name = file_path.name
+
+        # Always filter macOS metadata files
+        if name in self.processor.config.scanner.ignore_files:
+            return True
+        if any(name.startswith(prefix) for prefix in self.processor.config.scanner.ignore_prefixes):
+            return True
+
+        # For TM scans with manifest, DON'T filter by extension
+        # This allows message attachments (images, videos) to be processed
+        if self.processor.source_type == "time_machine" and self.extraction_manifest:
+            return False
+
+        # For regular candidate scans, filter by extension
+        return file_path.suffix.lower() in self.processor.config.scanner.ignore_extensions
+
     def _classify_from_manifest(
         self,
         file_path: Path,
@@ -186,6 +212,8 @@ class FileCategorizer:
             log_type = LogType.TM_LOG
         elif artifact_type == "cache":
             log_type = LogType.TM_CACHE
+        elif artifact_type == "keychain":
+            log_type = LogType.TM_KEYCHAIN
         else:
             return None  # Unknown type, fall back to fingerprinting
 
@@ -206,6 +234,44 @@ class FileCategorizer:
             file_accessed=file_accessed,
         )
 
+    def _write_tm_provenance(self, source_path: Path, dest_path: Path) -> None:
+        """
+        Write provenance data for a Time Machine file.
+
+        Looks up the file in the extraction manifest and writes a JSON
+        provenance file alongside the copied file.
+
+        Args:
+            source_path: Original file path in tm_extracted
+            dest_path: Destination path where file was copied
+        """
+        if not self.extraction_manifest:
+            return
+
+        try:
+            rel_path = str(source_path.relative_to(self.processor.input_dir))
+            manifest_entry = self.extraction_manifest.get(rel_path)
+            if not manifest_entry:
+                return
+
+            provenance_path = dest_path.parent / f"{dest_path.stem}_provenance.json"
+            provenance_data = {
+                "artifact_name": manifest_entry.get("artifact_name"),
+                "artifact_type": manifest_entry.get("artifact_type"),
+                "backup_id": manifest_entry.get("backup_id"),
+                "backup_date": manifest_entry.get("backup_date"),
+                "original_path": manifest_entry.get("original_path"),
+                "source_path": manifest_entry.get("source_path"),
+                "file_timestamps": manifest_entry.get("file_timestamps"),
+                "copied_to": str(dest_path),
+            }
+            import json
+
+            with provenance_path.open("w") as f:
+                json.dump(provenance_data, f, indent=2)
+        except Exception as e:
+            logger.debug(f"Failed to write provenance for {source_path.name}: {e}")
+
     def iter_input_files(self) -> list[Path]:
         """
         Find all files recursively in the input directory.
@@ -221,11 +287,8 @@ class FileCategorizer:
         """
         # Recursively find ALL files, regardless of folder structure
         # Filter out macOS metadata and system files using config
-        all_files = [
-            f
-            for f in self.processor.input_dir.rglob("*")
-            if f.is_file() and not self.processor.config.should_ignore_file(f)
-        ]
+        # For TM scans, skip extension filtering to include attachments (images, videos)
+        all_files = [f for f in self.processor.input_dir.rglob("*") if f.is_file() and not self._should_ignore_file(f)]
 
         if not all_files:
             logger.warning(f"No files found in {self.processor.input_dir}")
@@ -530,9 +593,25 @@ class FileCategorizer:
             if result_type == LogType.SQLITE:
                 # Remove .gz or .bz2 extension, keep base name
                 base_name = file_path.stem  # e.g., "database.sqlite" from "database.sqlite.gz"
-                dest_path = self.processor.paths.temp / base_name
-                shutil.copy2(decompressed_path, dest_path)
-                stat_key = "sqlite_from_archives"
+                # Check if database is encrypted
+                if is_encrypted_database(decompressed_path):
+                    # Route encrypted database to encrypted folder
+                    encrypted_dir = self.processor.paths.db_encrypted
+                    encrypted_dir.mkdir(parents=True, exist_ok=True)
+                    dest_path = encrypted_dir / base_name
+                    counter = 1
+                    while dest_path.exists():
+                        stem = Path(base_name).stem
+                        suffix = Path(base_name).suffix or ".db"
+                        dest_path = encrypted_dir / f"{stem}_{counter:03d}{suffix}"
+                        counter += 1
+                    shutil.copy2(decompressed_path, dest_path)
+                    stat_key = "sqlite_encrypted_from_archives"
+                    logger.debug(f"Encrypted database from archive routed to: {dest_path}")
+                else:
+                    dest_path = self.processor.paths.temp / base_name
+                    shutil.copy2(decompressed_path, dest_path)
+                    stat_key = "sqlite_from_archives"
 
             elif result_type == LogType.PLIST_WIFI:
                 # Validate plist and organize into exemplar folder structure
@@ -646,6 +725,10 @@ class FileCategorizer:
             if stat_key:
                 self.processor.stats[stat_key] = self.processor.stats.get(stat_key, 0) + 1
             self.processor.stats["archives_processed"] = self.processor.stats.get("archives_processed", 0) + 1
+
+            # For encrypted databases, don't return RecoveredFile (already handled)
+            if stat_key and "encrypted" in stat_key:
+                return None
 
             # Return RecoveredFile for the decompressed content
             return RecoveredFile(
@@ -829,10 +912,61 @@ class FileCategorizer:
         # Handle SQLite files
         if classified_file.file_type == LogType.SQLITE:
             try:
-                dest_path = self.processor.paths.temp / file_path.name
-                shutil.copy2(file_path, dest_path)
-                batch_results["sqlite_dbs"].append(classified_file)
-                batch_stats["sqlite_dbs"] += 1
+                # Check if database is encrypted
+                if is_encrypted_database(file_path):
+                    # Route encrypted database to encrypted folder with provenance
+                    encrypted_dir = self.processor.paths.db_encrypted
+
+                    # Try to get artifact info from extraction manifest for TM scans
+                    artifact_name = None
+                    manifest_entry = None
+                    if self.extraction_manifest:
+                        try:
+                            rel_path = str(file_path.relative_to(self.processor.input_dir))
+                            manifest_entry = self.extraction_manifest.get(rel_path)
+                            if manifest_entry:
+                                artifact_name = manifest_entry.get("artifact_name")
+                        except ValueError:
+                            pass
+
+                    # Create semantic subfolder if we have artifact name
+                    if artifact_name:
+                        encrypted_dir = encrypted_dir / artifact_name
+                    encrypted_dir.mkdir(parents=True, exist_ok=True)
+
+                    dest_path = encrypted_dir / file_path.name
+                    counter = 1
+                    while dest_path.exists():
+                        dest_path = encrypted_dir / f"{file_path.stem}_{counter:03d}{file_path.suffix}"
+                        counter += 1
+                    shutil.copy2(file_path, dest_path)
+
+                    # Write provenance for TM encrypted databases
+                    if manifest_entry:
+                        provenance_path = dest_path.with_suffix(".provenance.json")
+                        provenance_data = {
+                            "encrypted": True,
+                            "artifact_name": artifact_name,
+                            "backup_id": manifest_entry.get("backup_id"),
+                            "backup_date": manifest_entry.get("backup_date"),
+                            "original_path": manifest_entry.get("original_path"),
+                            "source_path": manifest_entry.get("source_path"),
+                            "file_timestamps": manifest_entry.get("file_timestamps"),
+                            "copied_to": str(dest_path),
+                        }
+                        with provenance_path.open("w") as f:
+                            import json
+
+                            json.dump(provenance_data, f, indent=2)
+
+                    batch_stats["sqlite_encrypted"] = batch_stats.get("sqlite_encrypted", 0) + 1
+                    logger.debug(f"Encrypted database routed to: {dest_path}")
+                else:
+                    # Normal database - copy to temp for processing
+                    dest_path = self.processor.paths.temp / file_path.name
+                    shutil.copy2(file_path, dest_path)
+                    batch_results["sqlite_dbs"].append(classified_file)
+                    batch_stats["sqlite_dbs"] += 1
             except Exception as e:
                 logger.debug(f"Failed to copy SQLite file {file_path.name}: {e}")
             return
@@ -994,6 +1128,8 @@ class FileCategorizer:
                 dest_path = self.processor.paths.logs / rel_path
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(file_path, dest_path)
+                # Write provenance data for TM files
+                self._write_tm_provenance(file_path, dest_path)
                 batch_results["text_logs"].setdefault(classified_file.file_type, []).append(classified_file)
                 batch_stats["text_logs"] += 1
             except Exception as e:
@@ -1012,10 +1148,32 @@ class FileCategorizer:
                 dest_path = self.processor.paths.caches / rel_path
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(file_path, dest_path)
+                # Write provenance data for TM files
+                self._write_tm_provenance(file_path, dest_path)
                 batch_results["other_files"].setdefault(classified_file.file_type, []).append(classified_file)
                 batch_stats["caches_kept"] = batch_stats.get("caches_kept", 0) + 1
             except Exception as e:
                 logger.debug(f"Failed to copy TM cache {file_path.name}: {e}")
+            return
+
+        # Handle Time Machine keychain files (classified by ARC catalog)
+        if classified_file.file_type == LogType.TM_KEYCHAIN:
+            try:
+                # Preserve directory structure from TM extraction
+                rel_path = file_path.relative_to(self.processor.input_dir)
+                # Remove the "keychains/" prefix if present since we're putting in keychains dir
+                parts = rel_path.parts
+                if parts and parts[0] == "keychains":
+                    rel_path = Path(*parts[1:]) if len(parts) > 1 else Path(file_path.name)
+                dest_path = self.processor.paths.keychains / rel_path
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(file_path, dest_path)
+                # Write provenance data for TM files
+                self._write_tm_provenance(file_path, dest_path)
+                batch_results["other_files"].setdefault(classified_file.file_type, []).append(classified_file)
+                batch_stats["keychains_kept"] = batch_stats.get("keychains_kept", 0) + 1
+            except Exception as e:
+                logger.debug(f"Failed to copy TM keychain {file_path.name}: {e}")
             return
 
         # Skip non-WiFi plists (we already handled PLIST_WIFI above)
@@ -1048,7 +1206,7 @@ class FileCategorizer:
             for file_path in self.processor.input_dir.rglob("*"):
                 if file_path.is_file():
                     total_seen += 1
-                    if self.processor.config.should_ignore_file(file_path):
+                    if self._should_ignore_file(file_path):
                         skipped_count += 1
                     else:
                         files.append(file_path)

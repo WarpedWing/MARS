@@ -176,9 +176,19 @@ def match_catalog_databases(
 
         # Match LF tables from each database in this catalog group
         for db_idx, db_record in enumerate(databases, 1):
-            db_name = Path(db_record["case_path"]).stem
+            case_path = Path(db_record["case_path"])
+            db_name = case_path.stem
 
-            # Find prepared database info
+            # Create unique db_name if parent folder differs from filename
+            # e.g., "TCC Database (System)/TCC_xxx.db" -> "TCC Database (System)__TCC_xxx"
+            # This handles cases where same filename appears in multiple artifact folders
+            parent_name = case_path.parent.name
+            if parent_name and parent_name != db_name and not db_name.startswith(parent_name):
+                unique_db_name = f"{parent_name}__{db_name}"
+            else:
+                unique_db_name = db_name
+
+            # Find prepared database info (use original db_name for lookup)
             db_info = prep_lookup.get(db_name)
 
             # Get source database path (chosen variant)
@@ -208,7 +218,7 @@ def match_catalog_databases(
             # Include ALL catalog matches, even without LF tables (they have intact data)
             catalog_tracking[exemplar_name].append(
                 {
-                    "db_name": db_name,
+                    "db_name": unique_db_name,  # Use unique name to avoid collisions
                     "split_db": split_db,
                     "source_db": source_db,
                     "match_results": match_results,

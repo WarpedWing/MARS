@@ -215,7 +215,7 @@ class TimeMachineScanUI:
             show_header_callback: Optional callback to display project header
         """
         from mars.config import ProjectPaths
-        from mars.pipeline.output.structure import OutputStructure
+        from mars.pipeline.output.structure import OutputStructure, create_logarchive_from_logs
         from mars.pipeline.raw_scanner.candidate_orchestrator import RawFileProcessor
 
         if show_header_callback:
@@ -342,6 +342,14 @@ class TimeMachineScanUI:
 
             # Run all processing
             processor.process_all(self.console)
+
+            # Create logarchive from Unified Logs + UUID Text
+            logarchive_path = create_logarchive_from_logs(
+                logs_dir=candidate_paths.logs,
+                archive_name="time_machine",
+            )
+            if logarchive_path:
+                self.console.print(f"[green]Created logarchive:[/green] {logarchive_path.name}")
 
             # Extract stats
             stats = {
@@ -526,11 +534,13 @@ class TimeMachineScanUI:
             from mars.cli.scan_report_generator import ScanReportGenerator
 
             # Build combined stats for report
+            # Keys must match what _build_candidate_html expects:
+            # total_found, matched_total, matched_nonempty, unmatched
             stats = {
-                "sqlite_dbs_found": candidate_stats.get("total_found", 0),
-                "sqlite_dbs_matched": candidate_stats.get("matched", 0),
-                "sqlite_dbs_matched_nonempty": candidate_stats.get("matched_nonempty", 0),
-                "sqlite_dbs_unmatched": candidate_stats.get("unmatched", 0),
+                "total_found": candidate_stats.get("total_found", 0),
+                "matched_total": candidate_stats.get("matched_total", 0),
+                "matched_nonempty": candidate_stats.get("matched_nonempty", 0),
+                "unmatched": candidate_stats.get("unmatched", 0),
                 "tm_artifacts_extracted": extraction_summary.get("total_extracted", 0),
                 "tm_duplicates_skipped": extraction_summary.get("skipped_duplicates", 0),
                 "tm_by_type": extraction_summary.get("by_type", {}),

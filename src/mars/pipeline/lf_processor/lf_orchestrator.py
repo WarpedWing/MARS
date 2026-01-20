@@ -943,14 +943,32 @@ class LFOrchestrator:
                 exact_matches = record.get("exact_matches", [])
                 if exact_matches:
                     # Only group as catalog if it's a FULL schema match
-                    full_match = None
-                    for match in exact_matches:
-                        match_type = match.get("match", "")
-                        if match_type in ["tables_equal+columns_equal", "hash"]:
-                            full_match = match
-                            break
+                    # For TM scans, prefer the match that corresponds to the artifact folder
+                    full_matches = [
+                        m for m in exact_matches if m.get("match", "") in ["tables_equal+columns_equal", "hash"]
+                    ]
 
-                    if full_match:
+                    if full_matches:
+                        # Try to find match based on artifact folder name from case_path
+                        # e.g., "tm_extracted/databases/TCC Database (User)/TCC_xxx.db"
+                        case_path = record.get("case_path", "")
+                        artifact_folder = Path(case_path).parent.name if case_path else ""
+
+                        # Prefer match whose label starts with artifact folder name
+                        full_match = None
+                        if artifact_folder:
+                            for match in full_matches:
+                                label = match.get("label", "")
+                                # Check if label starts with artifact folder (handles user suffix)
+                                # e.g., "TCC Database (User)_nbenford" starts with "TCC Database (User)"
+                                if label.startswith(artifact_folder):
+                                    full_match = match
+                                    break
+
+                        # Fall back to first full match if no artifact-specific match
+                        if not full_match:
+                            full_match = full_matches[0]
+
                         exact_match_label = full_match.get("label")
                         if exact_match_label:
                             catalog_groups[exact_match_label].append(record)

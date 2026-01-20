@@ -10,6 +10,7 @@ processing.
 from __future__ import annotations
 
 import shutil
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003 - used at runtime
 from typing import TYPE_CHECKING
@@ -130,7 +131,7 @@ def get_file_type_from_entry(entry: dict) -> str:
     """
     Determine the artifact type from a catalog entry.
 
-    Returns "database", "cache", or "log" based on the file_type field.
+    Returns "database", "cache", "log", or "keychain" based on the file_type field.
     Defaults to "cache" if not specified.
     """
     file_type = entry.get("file_type", "").lower()
@@ -139,7 +140,9 @@ def get_file_type_from_entry(entry: dict) -> str:
         return "database"
     if file_type == "log":
         return "log"
-    # Plists, biome, and other types go to caches
+    if file_type == "keychain":
+        return "keychain"
+    # Plists, biome, cache, and other types go to caches
     return "cache"
 
 
@@ -149,6 +152,8 @@ def get_output_subdir(artifact_type: str) -> str:
         return "databases"
     if artifact_type == "log":
         return "logs"
+    if artifact_type == "keychain":
+        return "keychains"
     return "caches"
 
 
@@ -197,6 +202,7 @@ def extract_artifacts_from_backup(
     (output_dir / "databases").mkdir(parents=True, exist_ok=True)
     (output_dir / "caches").mkdir(parents=True, exist_ok=True)
     (output_dir / "logs").mkdir(parents=True, exist_ok=True)
+    (output_dir / "keychains").mkdir(parents=True, exist_ok=True)
 
     # Collect all catalog entries for progress tracking
     entries = list(iter_catalog_entries(catalog))
@@ -319,20 +325,26 @@ def _extract_single_file(
                 counter += 1
         elif preserve_structure:
             # Maintain full directory structure (for unified logs, uuid text, etc.)
-            # Try to get type prefix from mapper, fall back to artifact_type
+            # DON'T include backup_id in path - it breaks logarchive compatibility
+            # Handle conflicts by appending backup_id to filename if needed
             if folder_info:
                 type_prefix, folder_name, _ = folder_info
                 # Output: logs/Unified Log (All Diagnostics)/private/var/db/diagnostics/...
-                output_path = output_dir / type_prefix / folder_name / backup_id / relative_path
+                output_path = output_dir / type_prefix / folder_name / relative_path
             else:
                 subdir = get_output_subdir(artifact_type)
-                output_path = output_dir / subdir / artifact_name / backup_id / relative_path
-            # For preserve_structure, conflicts are unlikely but handle with counter
-            counter = 1
-            base_output_path = output_path
-            while output_path.exists():
-                output_path = base_output_path.with_stem(f"{base_output_path.stem}_{counter}")
-                counter += 1
+                output_path = output_dir / subdir / artifact_name / relative_path
+            # Handle conflicts by appending backup_id to filename
+            if output_path.exists():
+                stem = output_path.stem
+                suffix = output_path.suffix
+                output_path = output_path.with_name(f"{stem}_{backup_id}{suffix}")
+                # If still conflicts, add counter
+                counter = 1
+                base_output_path = output_path
+                while output_path.exists():
+                    output_path = base_output_path.with_stem(f"{base_output_path.stem}_{counter}")
+                    counter += 1
         else:
             # Fallback: use artifact_name as folder (no ARC mapping available)
             # Output: databases/Unknown Artifact/filename_2026-01-19-131444.db
@@ -484,6 +496,35 @@ def get_extraction_summary(result: ExtractionResult) -> dict:
     }
 
 
+def _get_database_row_count(db_path: Path) -> int:
+    """
+    Get total row count across all tables in a database.
+
+    Args:
+        db_path: Path to SQLite database file
+
+    Returns:
+        Total row count across all tables (excluding sqlite_* tables),
+        or 0 if database cannot be read
+    """
+    try:
+        # Use read-only immutable mode to avoid recreating WAL/SHM files
+        with sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            tables = [row[0] for row in cursor.fetchall()]
+            total = 0
+            for table in tables:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM [{table}]")
+                    total += cursor.fetchone()[0]
+                except Exception:  # noqa: S110, BLE001
+                    pass
+            return total
+    except Exception:  # noqa: S110, BLE001
+        return 0
+
+
 def write_extraction_manifest(result: ExtractionResult, manifest_path: Path | None = None) -> Path:
     """
     Write an extraction manifest file mapping each extracted file to its metadata.
@@ -511,7 +552,7 @@ def write_extraction_manifest(result: ExtractionResult, manifest_path: Path | No
         except ValueError:
             rel_path = str(artifact.working_path)
 
-        manifest[rel_path] = {
+        entry = {
             "artifact_name": artifact.artifact_name,
             "artifact_type": artifact.artifact_type,
             "backup_id": artifact.backup_id,
@@ -531,6 +572,12 @@ def write_extraction_manifest(result: ExtractionResult, manifest_path: Path | No
                 else None,
             },
         }
+
+        # Add row count for database artifacts
+        if artifact.artifact_type == "database" and artifact.working_path.exists():
+            entry["row_count"] = _get_database_row_count(artifact.working_path)
+
+        manifest[rel_path] = entry
 
     with manifest_path.open("w") as f:
         json.dump(manifest, f, indent=2)

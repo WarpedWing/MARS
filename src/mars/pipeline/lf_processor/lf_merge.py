@@ -433,7 +433,7 @@ def process_metamatch_group(
                 target_table=table_name,
                 source_db=combined_db,
                 source_table=table_name,
-                data_source_value="carved",
+                data_source_value="candidate",
                 exemplar_schemas_dir=(exemplar_db_dir / "schemas" / group_label if exemplar_db_dir else None),
                 rubric_metadata=rubric_metadata,  # Pass pre-loaded rubric
             )
