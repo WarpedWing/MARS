@@ -32,10 +32,6 @@ from mars.pipeline.raw_scanner.tm_extractor import (
     load_artifact_catalog,
     write_extraction_manifest,
 )
-from mars.utils.time_machine_utils import (
-    TimeMachineBackup,
-    find_time_machine_volume,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,6 +39,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
     from mars.pipeline.project.manager import MARSProject
+    from mars.utils.time_machine_utils import TimeMachineBackup
 
 # Rich Colors
 DSB1 = "deep_sky_blue1"
@@ -67,35 +64,34 @@ class TimeMachineScanUI:
 
     def select_tm_volume(self) -> Path | None:
         """
-        Browse for and validate a Time Machine volume.
+        Browse for and select backup_manifest.plist from a Time Machine volume.
 
         Returns:
             Path to TM volume root, or None if cancelled/invalid
         """
-        from mars.cli.explorer import browse_for_directory
+        from mars.cli.explorer import browse_for_file
 
-        # Browse for directory
+        # Browse for backup_manifest.plist file directly
         self.show_current_project_menu()
-        selected = browse_for_directory(
+        manifest_path = browse_for_file(
             start_path=Path("/Volumes"),
-            title="Select Time Machine Backup Volume",
-            explanation="Select the Time Machine backup drive (contains backup_manifest.plist).",
+            file_filter=".plist",
+            title="Select Time Machine Backup Manifest",
+            explanation="Navigate to your Time Machine volume and select backup_manifest.plist",
         )
 
-        if selected is None:
+        if manifest_path is None:
             return None
 
-        # Validate it's a TM volume
-        tm_root = find_time_machine_volume(selected)
-        if tm_root is None:
+        # Validate correct file was selected
+        if manifest_path.name != "backup_manifest.plist":
             self.console.print(
-                "[bold red]Error:[/bold red] Selected path is not a valid "
-                "Time Machine backup volume.\n"
-                "[dim]A Time Machine volume should contain a backup_manifest.plist file.[/dim]"
+                f"[bold red]Error:[/bold red] Please select 'backup_manifest.plist', not '{manifest_path.name}'."
             )
             return None
 
-        return tm_root
+        # Return the volume root (parent of manifest)
+        return manifest_path.parent
 
     def select_backups(
         self,
