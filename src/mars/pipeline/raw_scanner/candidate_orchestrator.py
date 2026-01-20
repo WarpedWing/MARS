@@ -402,6 +402,9 @@ class RawFileProcessor:
         # Step 0: Scan and classify files (WiFi plists, ASL logs, JSONLZ4, text logs, SQLite)
         self.categorizer.scan_and_classify(richConsole)
 
+        # Step 0.5: Write consolidated provenance for logs/caches (one file per folder)
+        self.categorizer.write_consolidated_provenance()
+
         # Step 1: Process SQLite databases
         self.process_sqlite_databases(richConsole)
 
