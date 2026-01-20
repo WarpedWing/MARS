@@ -32,7 +32,7 @@ from mars.pipeline.lf_processor.lf_reconstruction import (
     reconstruct_exemplar_database,
 )
 from mars.utils.cleanup_utilities import cleanup_sqlite_directory
-from mars.utils.database_utils import get_chosen_variant_path
+from mars.utils.database_utils import get_chosen_variant_path, readonly_connection
 from mars.utils.debug_logger import logger
 
 if TYPE_CHECKING:
@@ -44,6 +44,99 @@ if TYPE_CHECKING:
 # Pattern to strip username and version suffix from exemplar names
 # Matches: _username or _username_vN at end of string
 _USERNAME_VERSION_PATTERN = re.compile(r"_[a-zA-Z][a-zA-Z0-9_]*(?:_v\d+)?$")
+
+
+def _is_tm_only_artifact(artifact_name: str) -> bool:
+    """Check if artifact is marked as tm_only in the artifact recovery catalog."""
+    from mars.pipeline.raw_scanner.tm_extractor import load_artifact_catalog
+
+    catalog = load_artifact_catalog()
+    for _category, entries in catalog.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if entry.get("name") == artifact_name and entry.get("tm_only"):
+                return True
+    return False
+
+
+def _generate_tm_only_rubric(
+    db_path: Path,
+    exemplar_name: str,
+    schemas_dir: Path,
+    min_timestamp_rows: int = 1,
+    min_role_sample_size: int = 5,
+    min_year: int = 2000,
+    max_year: int = 2038,
+) -> Path | None:
+    """
+    Generate a self-rubric for a TM-only artifact and save it at the expected location.
+
+    TM-only artifacts (like netusage.sqlite) don't exist on live systems, so no
+    exemplar rubric can be created during exemplar scanning. This generates a rubric
+    from the TM candidate database itself.
+
+    Args:
+        db_path: Path to the TM candidate database
+        exemplar_name: Name of the artifact (e.g., "Network Usage Database")
+        schemas_dir: Base schemas directory (typically exemplar_db_dir / "schemas")
+        min_timestamp_rows: Minimum timestamp values to assign role
+        min_role_sample_size: Minimum samples for UUID/programming_case detection
+        min_year: Minimum year for timestamp validation
+        max_year: Maximum year for timestamp validation
+
+    Returns:
+        Path to generated rubric file, or None if generation failed
+    """
+    from mars.pipeline.matcher.generate_sqlite_schema_rubric import (
+        fetch_tables,
+        generate_rubric,
+    )
+
+    try:
+        with readonly_connection(db_path) as con:
+            all_tables = fetch_tables(con)
+
+            # Filter out system and FTS tables
+            filtered_tables = []
+            for name, sql in all_tables:
+                if name.startswith("sqlite_"):
+                    continue
+                if any(name.endswith(suffix) for suffix in ["_content", "_segdir", "_segments", "_docsize", "_stat"]):
+                    continue
+                filtered_tables.append((name, sql))
+
+            if not filtered_tables:
+                return None
+
+            # Generate rubric
+            rubric = generate_rubric(
+                con,
+                filtered_tables,
+                rubric_name=exemplar_name,
+                min_timestamp_rows=min_timestamp_rows,
+                min_role_sample_size=min_role_sample_size,
+                min_year=min_year,
+                max_year=max_year,
+            )
+
+        if not isinstance(rubric, dict) or "tables" not in rubric:
+            return None
+
+        # Save rubric at expected location
+        rubric_dir = schemas_dir / exemplar_name
+        rubric_dir.mkdir(parents=True, exist_ok=True)
+
+        rubric_path = rubric_dir / f"{exemplar_name}.rubric.json"
+        with rubric_path.open("w") as f:
+            json.dump(rubric, f, indent=2)
+
+        logger.debug(f"    Generated self-rubric for TM-only artifact: {exemplar_name}")
+        return rubric_path
+
+    except Exception as e:
+        logger.debug(f"    Failed to generate TM-only rubric for {exemplar_name}: {e}")
+        return None
 
 
 def _count_exact_matches(record: dict) -> int:
@@ -155,9 +248,27 @@ def match_catalog_databases(
                     break
 
         if not exemplar_rubric_path:
-            if not candidate_paths:
-                logger.warning(f"    ⚠ Exemplar rubric not found for {exemplar_name} (no exemplar dir)")
-            continue
+            # Check if this is a TM-only artifact (no exemplar can exist)
+            if _is_tm_only_artifact(exemplar_name) and databases and exemplar_db_dir:
+                # Get first database to generate self-rubric from
+                first_db_record = databases[0]
+                source_db = get_chosen_variant_path(first_db_record)
+                if source_db and source_db.exists():
+                    schemas_dir = exemplar_db_dir / "schemas"
+                    exemplar_rubric_path = _generate_tm_only_rubric(
+                        db_path=source_db,
+                        exemplar_name=exemplar_name,
+                        schemas_dir=schemas_dir,
+                        min_timestamp_rows=min_timestamp_rows,
+                        min_role_sample_size=min_role_sample_size,
+                        min_year=min_year,
+                        max_year=max_year,
+                    )
+
+            if not exemplar_rubric_path:
+                if not candidate_paths:
+                    logger.debug(f"    Exemplar rubric not found for {exemplar_name} (no exemplar dir)")
+                continue
 
         # Load exemplar rubric
         with exemplar_rubric_path.open() as f:
@@ -309,9 +420,31 @@ def create_catalog_outputs(
                     exemplar_rubric_path = candidate
                     break
 
+        # Track if this is a TM-only artifact (skip semantic validation)
+        is_tm_only = False
+
         if not exemplar_rubric_path:
-            logger.warning("      ⚠ Rubric not found, skipping")
-            continue
+            # Check if this is a TM-only artifact (may need rubric generation)
+            if _is_tm_only_artifact(exemplar_name) and db_entries and exemplar_db_dir:
+                is_tm_only = True
+                # Get first database to generate self-rubric from
+                first_entry = db_entries[0]
+                source_db = first_entry.get("source_db")
+                if source_db and Path(source_db).exists():
+                    schemas_dir = exemplar_db_dir / "schemas"
+                    exemplar_rubric_path = _generate_tm_only_rubric(
+                        db_path=Path(source_db),
+                        exemplar_name=exemplar_name,
+                        schemas_dir=schemas_dir,
+                        min_timestamp_rows=min_timestamp_rows,
+                        min_role_sample_size=min_role_sample_size,
+                        min_year=min_year,
+                        max_year=max_year,
+                    )
+
+            if not exemplar_rubric_path:
+                logger.debug("      Rubric not found, skipping")
+                continue
 
         # Load rubric
         with exemplar_rubric_path.open() as f:
@@ -388,6 +521,7 @@ def create_catalog_outputs(
 
         # Reconstruct database (progress is tracked at the orchestrator level)
         # skip_shared_tables=False for unique exact matches - keep all data here
+        # skip_semantic_validation=True for TM-only artifacts (accept all data)
         result = reconstruct_exemplar_database(
             exemplar_name=exemplar_name,
             db_entries=db_entries,
@@ -401,6 +535,7 @@ def create_catalog_outputs(
             profiles=profiles,  # Pass profiles for export path resolution
             consumed_lf_tables=consumed_lf_tables,
             skip_shared_tables=not has_unique_match,  # Keep all tables for unique matches
+            skip_semantic_validation=is_tm_only,  # Skip validation for TM-only artifacts
         )
 
         if result.get("success"):

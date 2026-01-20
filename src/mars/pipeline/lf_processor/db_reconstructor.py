@@ -825,6 +825,7 @@ def copy_table_data_with_provenance(
     data_source_value: str = "intact",
     exemplar_schemas_dir: Path | None = None,
     rubric_metadata: dict | None = None,
+    skip_semantic_validation: bool = False,
 ) -> int:
     """
     Copy data from source table to target table, adding data_source column.
@@ -837,6 +838,8 @@ def copy_table_data_with_provenance(
         data_source_value: Value to use for data_source column (default: "intact")
         exemplar_schemas_dir: Optional path to exemplar schemas directory for rubric validation
         rubric_metadata: Optional pre-loaded rubric metadata dict (avoids loading on every call)
+        skip_semantic_validation: Skip semantic role validation (for TM candidates where
+            we want to accept all data without rejection). Type affinity checks still apply.
 
     Returns:
         Number of rows copied
@@ -1034,7 +1037,11 @@ def copy_table_data_with_provenance(
                     continue
 
                 # Validate semantic roles (timestamps, UUIDs, etc.)
-                is_valid, rejection_reason = validate_row_types(row, source_columns)
+                # Skip for TM candidates where we want to accept all data
+                if skip_semantic_validation:
+                    is_valid, rejection_reason = True, None
+                else:
+                    is_valid, rejection_reason = validate_row_types(row, source_columns)
                 if not is_valid:
                     rows_rejected += 1
                     # Collect first 5 rejection reasons for debugging
@@ -1202,6 +1209,61 @@ def create_manifest_file(
         True if successful, False otherwise
     """
     try:
+        # Try to read provenance data from extraction manifest (TM scans)
+        # The case_path points to the original file in tm_extracted/databases/
+        # The extraction manifest is at tm_extracted/extraction_manifest.json
+        provenance_data: dict = {}
+        for src_db in source_databases:
+            case_path_str = src_db.get("case_path", "")
+            if case_path_str:
+                case_path = Path(case_path_str)
+                # Find tm_extracted directory by walking up from case_path
+                # Path is like: .../tm_extracted/databases/Artifact Name/file.sqlite
+                for parent in case_path.parents:
+                    if parent.name == "tm_extracted":
+                        manifest_path = parent / "extraction_manifest.json"
+                        if manifest_path.exists():
+                            try:
+                                with manifest_path.open() as f:
+                                    extraction_manifest = json.load(f)
+                                # Look up file by relative path from tm_extracted
+                                rel_path = str(case_path.relative_to(parent))
+                                manifest_entry = extraction_manifest.get(rel_path)
+                                if manifest_entry:
+                                    # Build provenance data from extraction manifest
+                                    file_timestamps = manifest_entry.get("file_timestamps", {})
+                                    provenance_data = {
+                                        "name": manifest_entry.get("artifact_name"),
+                                        "source_path": manifest_entry.get("original_path", ""),
+                                        "md5": manifest_entry.get("content_hash", ""),
+                                        "file_created": file_timestamps.get("created"),
+                                        "file_modified": file_timestamps.get("modified"),
+                                        "file_accessed": file_timestamps.get("accessed"),
+                                        "backup_id": manifest_entry.get("backup_id"),
+                                        "backup_date": manifest_entry.get("backup_date"),
+                                        "artifact_type": manifest_entry.get("artifact_type"),
+                                        "tm_source_path": manifest_entry.get("source_path", ""),
+                                    }
+                            except Exception:
+                                pass
+                        break
+                if provenance_data:
+                    break  # Use first valid provenance found
+
+            # Fallback: try .provenance.json next to selected_variants path
+            if not provenance_data:
+                src_path_str = src_db.get("source_db_path", "")
+                if src_path_str:
+                    src_path = Path(src_path_str)
+                    prov_path = src_path.parent / f"{src_path.stem}.provenance.json"
+                    if prov_path.exists():
+                        try:
+                            with prov_path.open() as f:
+                                provenance_data = json.load(f)
+                            break
+                        except Exception:
+                            pass
+
         manifest = {
             "output_type": output_type,
             "output_name": output_name,
@@ -1211,6 +1273,7 @@ def create_manifest_file(
             "created": datetime.now().isoformat(),
             "source_databases": source_databases,
             "combined_output": combined_stats,
+            "provenance": provenance_data,  # Include raw file provenance (path, md5, timestamps)
         }
 
         with output_path.open("w") as f:

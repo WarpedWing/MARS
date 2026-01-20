@@ -50,6 +50,7 @@ def reconstruct_exemplar_database(
     username: str | None = None,
     profiles: list[str] | None = None,
     consumed_lf_tables: dict[str, set[str]] | None = None,
+    skip_semantic_validation: bool = False,
 ) -> dict:
     """
     Reconstruct a database from multiple sources using an exemplar rubric.
@@ -80,6 +81,8 @@ def reconstruct_exemplar_database(
             Keys are db_name, values are sets of lf_table names. If provided, this function
             will skip LF tables that have already been consumed by a prior phase/exemplar
             and will mark newly consumed tables. Modified in place.
+        skip_semantic_validation: Skip semantic role validation when copying data (for TM
+            candidates where we want to accept all data without rejection).
 
     Returns:
         Dict with reconstruction statistics
@@ -384,6 +387,7 @@ def reconstruct_exemplar_database(
                     data_source_value=(f"candidate_{db_name}" if output_type == "candidate" else f"found_{db_name}"),
                     exemplar_schemas_dir=(exemplar_db_dir / "schemas" / exemplar_name if exemplar_db_dir else None),
                     rubric_metadata=rubric_metadata,
+                    skip_semantic_validation=skip_semantic_validation,
                 )
                 total_intact_rows += rows
                 intact_rows_per_source[db_name] += rows
@@ -466,10 +470,15 @@ def reconstruct_exemplar_database(
         if db_name in seen_db_names:
             continue  # Skip duplicate entries
         seen_db_names.add(db_name)
+        # Get case_path from record for original file location (used for provenance lookup)
+        record = entry.get("record", {})
+        case_path = record.get("case_path", "")
         source_info = {
             "db_name": db_name,
             "intact_rows": intact_rows_per_source.get(db_name, 0),
             "lf_rows": lf_rows_per_source.get(db_name, 0),
+            "source_db_path": str(entry.get("source_db", "")),  # For provenance lookup
+            "case_path": case_path,  # Original path in tm_extracted (for extraction manifest lookup)
         }
         source_db_list.append(source_info)
 
