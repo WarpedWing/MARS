@@ -177,6 +177,83 @@ class MARSCLI:
         # After scan completes, continue with normal menu flow
         self.run()
 
+    def run_direct_tm_scan(self, tm_volume: Path) -> None:
+        """Run Time Machine scan directly without menu navigation.
+
+        Used after sudo elevation to skip directly to the TM backup selection
+        and scan, preserving the user's navigation progress.
+
+        Args:
+            tm_volume: Path to Time Machine volume root
+        """
+        from mars.utils.time_machine_utils import find_time_machine_volume, parse_backup_manifest
+
+        # Validate TM volume
+        validated_volume = find_time_machine_volume(tm_volume)
+        if validated_volume is None:
+            self.console.print(f"[bold red]Error:[/bold red] Not a valid Time Machine volume: {tm_volume}")
+            sys.exit(1)
+
+        # Load last-used project from config
+        last_project = self._get_last_project()
+        if not last_project:
+            self.console.print("[bold red]Error:[/bold red] No recent project found.")
+            self.console.print("Please run MARS normally first to create or open a project.")
+            sys.exit(1)
+
+        if not self._open_last_project(last_project):
+            self.console.print(f"[bold red]Error:[/bold red] Could not open project: {last_project}")
+            sys.exit(1)
+
+        # Show admin status
+        self.show_current_project_menu()
+        if is_admin():
+            self.console.print("[bold dark_sea_green4][✓] Running with administrator privileges[/bold dark_sea_green4]")
+            sleep(0.7)
+
+        # Select exemplar scan to use for matching
+        exemplar_scan = self._select_exemplar_scan()
+        if exemplar_scan is None:
+            self.console.print("[yellow]No exemplar scan selected.[/yellow]")
+            sleep(0.7)
+            self.run()
+            return
+
+        # Parse manifest and get available backups
+        try:
+            backups = parse_backup_manifest(validated_volume / "backup_manifest.plist")
+        except Exception as e:
+            self.console.print(f"[bold red]Error reading backup manifest:[/bold red] {e}")
+            sleep(1)
+            self.run()
+            return
+
+        if not backups:
+            self.console.print("[yellow]No backups found in the selected volume.[/yellow]")
+            sleep(1)
+            self.run()
+            return
+
+        # Initialize Time Machine UI and continue with backup selection + scan
+        tm_ui = TimeMachineScanUI(self.console, self.project, lambda: self.show_current_project_menu())  # type: ignore[arg-type]
+
+        # Select backups to scan
+        selected_backups = tm_ui.select_backups(backups)
+        if not selected_backups:
+            self.run()
+            return
+
+        # Run the scan
+        tm_ui.run_scan(
+            tm_volume=validated_volume,
+            selected_backups=selected_backups,
+            exemplar_scan=exemplar_scan,
+            show_header_callback=self.show_current_project_menu,
+        )
+
+        # After scan completes, continue with normal menu flow
+        self.run()
+
     def show_banner(self):
         """Display application banner."""
 
@@ -1390,6 +1467,55 @@ class MARSCLI:
         if tm_volume is None:
             return False
 
+        # Ask about sudo for maximum access (like exemplar scan)
+        self.show_current_project_menu()
+        self.console.print("\n[bold]Administrator Privileges:[/bold]")
+        self.console.print("[dim]Some Time Machine files (auth.db, known-networks.plist, etc.)[/dim]")
+        self.console.print("[dim]require administrator privileges to access.[/dim]")
+
+        if not is_admin():
+            use_sudo = Prompt.ask(
+                "\n[bold]Scan with administrator privileges?[/bold]",
+                choices=["y", "n"],
+                default="y",
+            ).lower()
+
+            if use_sudo == "y":
+                # Try to auto-relaunch with sudo using the wrapper script
+                mars_sudo = _get_mars_sudo_path()
+                if mars_sudo:
+                    self.console.print("\n[bold cyan]Relaunching with administrator privileges...[/bold cyan]")
+                    self.console.print("[dim]You may be prompted for your password.[/dim]\n")
+                    # Replace current process with sudo version, skip to TM scan
+                    os.execvp(str(mars_sudo), [str(mars_sudo), "--tm-scan", str(tm_volume)])
+                else:
+                    # Fallback: manual instructions if wrapper not found
+                    self.console.print("\n[bold red]Error: mars-sudo wrapper not found[/bold red]")
+                    self.console.print("[yellow]Please run manually:[/yellow]")
+                    self.console.print(
+                        f"[dim]  sudo UV_CACHE_DIR=/tmp/uv-cache uv run mars --tm-scan {tm_volume}[/dim]"
+                    )
+                    self.console.print("\n[dim]This will skip directly to the TM backup selection.[/dim]")
+                    Prompt.ask("\nPress Enter to continue")
+                    return False
+            if use_sudo == "n":
+                continue_scan = Prompt.ask(
+                    "[bold yellow]\nContinue as non-sudo?[/bold yellow]",
+                    choices=["y", "n"],
+                    default="n",
+                ).lower()
+                if continue_scan != "y":
+                    self.console.print("\n[bold red]Declined non-sudo scan.[/bold red]")
+                    sleep(0.7)
+                    return False
+
+        # Already running with elevated privileges
+        if is_admin():
+            self.console.print(
+                "\n[bold dark_sea_green4][✓] Running with administrator privileges[/bold dark_sea_green4]"
+            )
+            sleep(0.7)
+
         # Parse manifest and get available backups
         try:
             backups = parse_backup_manifest(tm_volume / "backup_manifest.plist")
@@ -2000,6 +2126,11 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help="Skip to exemplar scan confirmation for the given source path (used by mars-sudo)",
     )
+    parser.add_argument(
+        "--tm-scan",
+        metavar="VOLUME_PATH",
+        help="Skip to Time Machine scan for the given TM volume path (used by mars-sudo)",
+    )
     return parser.parse_args()
 
 
@@ -2024,6 +2155,9 @@ def main():
         if args.exemplar_scan:
             # Skip main menu, go directly to exemplar scan (used after sudo elevation)
             cli.run_direct_exemplar_scan(Path(args.exemplar_scan))
+        elif args.tm_scan:
+            # Skip main menu, go directly to TM scan (used after sudo elevation)
+            cli.run_direct_tm_scan(Path(args.tm_scan))
         else:
             cli.run()
     except KeyboardInterrupt:
