@@ -62,15 +62,20 @@ def _get_mars_sudo_path() -> Path | None:
     Returns:
         Path to mars-sudo if found and executable, None otherwise
     """
-    # First check if mars-sudo is in PATH (installed MARS)
+    # First try relative to source tree (development) - BEFORE checking PATH
+    # This ensures we use the same version we're running from, not an old install
+    src_root = Path(__file__).parent.parent.parent.parent  # cli/app.py -> project root
+    dev_path = src_root / "bin" / "mars-sudo"
+    if dev_path.exists() and os.access(dev_path, os.X_OK):
+        return dev_path
+
+    # Then check if mars-sudo is in PATH (installed MARS)
     which_result = shutil.which("mars-sudo")
     if which_result:
         return Path(which_result)
 
-    # Try relative to source tree (development)
-    src_root = Path(__file__).parent.parent.parent.parent  # cli/app.py -> project root
+    # Try other common locations
     candidates = [
-        src_root / "bin" / "mars-sudo",
         Path("/usr/local/bin/mars-sudo"),
         Path.home() / ".local" / "bin" / "mars-sudo",
     ]
