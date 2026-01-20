@@ -139,6 +139,13 @@ class FileCategorizer:
             if self.extraction_manifest:
                 logger.debug(f"Loaded extraction manifest with {len(self.extraction_manifest)} entries")
 
+        # Pending provenance for logs/caches (consolidate at end of scan)
+        # Key: artifact_type ("logs" or "caches"), Value: list of file metadata dicts
+        self._pending_provenance: dict[str, list[dict[str, Any]]] = {
+            "logs": [],
+            "caches": [],
+        }
+
     def _should_ignore_file(self, file_path: Path) -> bool:
         """
         Check if a file should be ignored.
@@ -234,16 +241,17 @@ class FileCategorizer:
             file_accessed=file_accessed,
         )
 
-    def _write_tm_provenance(self, source_path: Path, dest_path: Path) -> None:
+    def _write_tm_provenance(self, source_path: Path, dest_path: Path, artifact_type: str | None = None) -> None:
         """
-        Write provenance data for a Time Machine file.
+        Write or collect provenance data for a Time Machine file.
 
-        Looks up the file in the extraction manifest and writes a JSON
-        provenance file alongside the copied file.
+        For databases: writes individual .provenance.json immediately with full metadata.
+        For logs/caches: collects metadata for later consolidation (one file per folder).
 
         Args:
             source_path: Original file path in tm_extracted
             dest_path: Destination path where file was copied
+            artifact_type: Type of artifact ("database", "log", "cache", etc.)
         """
         if not self.extraction_manifest:
             return
@@ -254,23 +262,97 @@ class FileCategorizer:
             if not manifest_entry:
                 return
 
-            provenance_path = dest_path.parent / f"{dest_path.stem}_provenance.json"
+            # Get file timestamps from manifest
+            file_timestamps = manifest_entry.get("file_timestamps", {})
+
+            # Build provenance data with full metadata (matching exemplar format)
             provenance_data = {
-                "artifact_name": manifest_entry.get("artifact_name"),
-                "artifact_type": manifest_entry.get("artifact_type"),
+                "name": manifest_entry.get("artifact_name"),
+                "source_path": manifest_entry.get("original_path", ""),  # Full original path
+                "md5": manifest_entry.get("content_hash", ""),
+                "file_created": file_timestamps.get("created"),
+                "file_modified": file_timestamps.get("modified"),
+                "file_accessed": file_timestamps.get("accessed"),
                 "backup_id": manifest_entry.get("backup_id"),
                 "backup_date": manifest_entry.get("backup_date"),
-                "original_path": manifest_entry.get("original_path"),
-                "source_path": manifest_entry.get("source_path"),
-                "file_timestamps": manifest_entry.get("file_timestamps"),
-                "copied_to": str(dest_path),
+                "artifact_type": manifest_entry.get("artifact_type"),
+                "tm_source_path": manifest_entry.get("source_path", ""),
             }
+
             import json
 
-            with provenance_path.open("w") as f:
-                json.dump(provenance_data, f, indent=2)
+            # Determine actual artifact type from manifest if not provided
+            if artifact_type is None:
+                artifact_type = manifest_entry.get("artifact_type", "")
+
+            # For databases: write individual provenance file immediately
+            if artifact_type == "database":
+                provenance_path = dest_path.parent / f"{dest_path.stem}.provenance.json"
+                with provenance_path.open("w") as f:
+                    json.dump(provenance_data, f, indent=2)
+            # For logs/caches: collect for consolidation (one file per folder)
+            elif artifact_type in ("log", "cache"):
+                # Add destination folder for grouping
+                provenance_data["filename"] = dest_path.name
+                provenance_data["dest_folder"] = str(dest_path.parent)
+                target_list = "logs" if artifact_type == "log" else "caches"
+                self._pending_provenance[target_list].append(provenance_data)
+            # For other types (attachments, keychains): collect similarly
+            else:
+                provenance_data["filename"] = dest_path.name
+                provenance_data["dest_folder"] = str(dest_path.parent)
+                # Put attachments and other types in caches for consolidation
+                self._pending_provenance["caches"].append(provenance_data)
+
         except Exception as e:
-            logger.debug(f"Failed to write provenance for {source_path.name}: {e}")
+            logger.debug(f"Failed to write/collect provenance for {source_path.name}: {e}")
+
+    def write_consolidated_provenance(self) -> None:
+        """
+        Write consolidated provenance files for logs and caches.
+
+        Creates one _provenance.json per folder containing metadata for all
+        files in that folder. This matches the exemplar provenance pattern
+        and avoids creating hundreds of individual provenance files.
+
+        Should be called at the end of file categorization.
+        """
+        import json
+        from collections import defaultdict
+
+        for artifact_type, files in self._pending_provenance.items():
+            if not files:
+                continue
+
+            # Group files by destination folder
+            by_folder: dict[Path, list[dict[str, Any]]] = defaultdict(list)
+            for file_data in files:
+                folder_str = file_data.pop("dest_folder", "")
+                if folder_str:
+                    folder = Path(folder_str)
+                    by_folder[folder].append(file_data)
+
+            # Write one provenance file per folder
+            for folder, folder_files in by_folder.items():
+                if not folder.exists():
+                    continue
+
+                folder_name = folder.name
+                provenance_path = folder / f"{folder_name}_provenance.json"
+
+                provenance_data = {
+                    "artifact_type": artifact_type,
+                    "folder": str(folder),
+                    "file_count": len(folder_files),
+                    "files": folder_files,
+                }
+
+                try:
+                    with provenance_path.open("w") as f:
+                        json.dump(provenance_data, f, indent=2)
+                    logger.debug(f"Wrote consolidated provenance: {provenance_path.name} ({len(folder_files)} files)")
+                except Exception as e:
+                    logger.debug(f"Failed to write consolidated provenance for {folder}: {e}")
 
     def iter_input_files(self) -> list[Path]:
         """
@@ -1128,8 +1210,8 @@ class FileCategorizer:
                 dest_path = self.processor.paths.logs / rel_path
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(file_path, dest_path)
-                # Write provenance data for TM files
-                self._write_tm_provenance(file_path, dest_path)
+                # Collect provenance data for TM files (consolidated at end)
+                self._write_tm_provenance(file_path, dest_path, artifact_type="log")
                 batch_results["text_logs"].setdefault(classified_file.file_type, []).append(classified_file)
                 batch_stats["text_logs"] += 1
             except Exception as e:
@@ -1148,8 +1230,8 @@ class FileCategorizer:
                 dest_path = self.processor.paths.caches / rel_path
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(file_path, dest_path)
-                # Write provenance data for TM files
-                self._write_tm_provenance(file_path, dest_path)
+                # Collect provenance data for TM files (consolidated at end)
+                self._write_tm_provenance(file_path, dest_path, artifact_type="cache")
                 batch_results["other_files"].setdefault(classified_file.file_type, []).append(classified_file)
                 batch_stats["caches_kept"] = batch_stats.get("caches_kept", 0) + 1
             except Exception as e:
@@ -1168,8 +1250,8 @@ class FileCategorizer:
                 dest_path = self.processor.paths.keychains / rel_path
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(file_path, dest_path)
-                # Write provenance data for TM files
-                self._write_tm_provenance(file_path, dest_path)
+                # Collect provenance data for TM files (consolidated at end)
+                self._write_tm_provenance(file_path, dest_path, artifact_type="cache")
                 batch_results["other_files"].setdefault(classified_file.file_type, []).append(classified_file)
                 batch_stats["keychains_kept"] = batch_stats.get("keychains_kept", 0) + 1
             except Exception as e:
