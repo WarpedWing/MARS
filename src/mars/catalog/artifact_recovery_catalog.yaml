@@ -102,23 +102,23 @@ apple_system_logs:
     exemplar_pattern: databases/catalog/Power Management ASL*
 
 auth_kit:
-  - name: AuthKit Database
+  - name: AuthKit Authorization
     glob_pattern: "Users/*/Library/Application Support/com.apple.akd/authorization.db"
     file_type: database
     scope: user
     description: AuthKit database
     ignorable_tables: ["version"]
     notes: Authorization kit DB
-    exemplar_pattern: databases/catalog/AuthKit Database*
+    exemplar_pattern: databases/catalog/AuthKit Authorization*
 
-  - name: Device List Database
+  - name: AuthKit Device List
     glob_pattern: "Users/*/Library/Application Support/com.apple.akd/devicelist.db"
     file_type: database
     scope: user
     description: User device database
     ignorable_tables: ["version"]
     notes: Device List
-    exemplar_pattern: databases/catalog/Device List Database*
+    exemplar_pattern: databases/catalog/AuthKit Device List*
 
 authentication:
   - name: Authentication Database
@@ -536,7 +536,25 @@ firefox:
     exemplar_pattern: caches/Firefox Cache*
 
   - name: Firefox LZ4
-    glob_pattern: "Users/*/Library/Application Support/Firefox/Profiles/*/*.mozlz4"
+    glob_pattern: "Users/*/Library/Application Support/Firefox/Profiles/*/*.*lz4"
+    exemplar_pattern: caches/Firefox LZ4*
+    scope: user
+    multi_profile: true
+    has_archives: false
+    file_type: cache
+    description: Firefox cache
+
+  # - name: Firefox LZ4 (jsonlz4)
+  #   glob_pattern: "Users/*/Library/Application Support/Firefox/Profiles/*/*.jsonlz4"
+  #   exemplar_pattern: caches/Firefox LZ4*
+  #   scope: user
+  #   multi_profile: true
+  #   has_archives: false
+  #   file_type: cache
+  #   description: Firefox cache
+
+  - name: Firefox LZ4
+    glob_pattern: "Users/*/Library/Application Support/Firefox/Profiles/*/bookmarkbackups/*.*lz4"
     exemplar_pattern: caches/Firefox LZ4*
     scope: user
     multi_profile: true
@@ -545,7 +563,18 @@ firefox:
     description: Firefox cache
 
   - name: Firefox LZ4
-    glob_pattern: "Users/*/Library/Application Support/Firefox/Profiles/*/*.jsonlz4"
+    glob_pattern:
+      "Users/*/Library/Application Support/Firefox/Profiles/*/datareporting/archived/*/*.*lz4"
+    exemplar_pattern: caches/Firefox LZ4*
+    scope: user
+    multi_profile: true
+    has_archives: false
+    file_type: cache
+    description: Firefox cache
+
+  - name: Firefox LZ4
+    glob_pattern:
+      "Users/*/Library/Application Support/Firefox/Profiles/*/sessionstore-backups/*.*lz4*"
     exemplar_pattern: caches/Firefox LZ4*
     scope: user
     multi_profile: true

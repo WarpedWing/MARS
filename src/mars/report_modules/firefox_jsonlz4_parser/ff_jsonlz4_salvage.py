@@ -946,7 +946,7 @@ def main():
         default=Path(),
         help="Output directory (default: current)",
     )
-    ap.add_argument("--glob", default="**/*.*lz4", help='Glob pattern (default: "**/*.*lz4")')
+    ap.add_argument("--glob", default="**/*.*lz4*", help='Glob pattern (default: "**/*.*lz4*")')
     ap.add_argument(
         "--append",
         action="store_true",
@@ -955,8 +955,8 @@ def main():
     ap.add_argument(
         "--classify",
         choices=["move", "copy", "link", "none"],
-        default="none",
-        help="Move/copy/link each source into category folders under --out (default: none)",
+        default="link",
+        help="Move/copy/link each source into category folders under --out (default: link)",
     )
     ap.add_argument(
         "--preserve-tree",

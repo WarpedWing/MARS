@@ -1,75 +1,74 @@
 module_info:
   name: Firefox JSONLZ4 Parser
   report_folder_name: Firefox LZ4
-  version: '1.0'
+  version: "1.0"
   description: Salvage Firefox JSONLZ4, export CSVs, and classify files.
   dependencies: []
-  readme: ''
+  readme: ""
   scan_type:
-  - exemplar
-  - candidate
+    - exemplar
+    - candidate
   target: Firefox LZ4
   entry: ff_jsonlz4_salvage
   active: true
 arguments:
   ff_jsonlz4_salvage:
-  - name: input_path
-    flag: null
-    type: Path
-    default: null
-    help: Input directory (scanned recursively) for *.jsonlz4
-    required: true
-    value: null
-  - name: output_path
-    flag: --out
-    default: null
-    type: Path
-    help: Output path
-    required: true
-    value: null
-  - name: glob
-    flag: --glob
-    default: '**/*.*lz4'
-    type: str
-    help: 'Glob pattern (default: "**/*.*lz4")'
-    required: false
-    set: false
-    value: null
-  - name: append_csv
-    flag: --append
-    type: bool
-    help: Append to existing CSVs instead of overwriting
-    required: false
-    set: false
-  - name: classify
-    flag: --classify
-    choices:
-    - move
-    - copy
-    - link
-    - none
-    type: str
-    default: none
-    help: 'Move/copy/link each source into category folders under --out (default:
-      none)'
-    required: false
-    set: true
-    value: none
-  - name: preserve_tree
-    flag: --preserve-tree
-    type: bool
-    help: Preserve original relative path under category folders
-    required: false
-    set: false
-  - name: dry_run
-    flag: --dry-run
-    type: bool
-    help: Show planned file operations without performing them
-    required: false
-    set: false
-  - name: delete_source
-    flag: --delete-source
-    type: bool
-    help: Delete source JSONLZ4 files after successful CSV export (saves disk space)
-    required: false
-    set: false
+    - name: input_path
+      flag: null
+      type: Path
+      default: null
+      help: Input directory (scanned recursively) for *.jsonlz4
+      required: true
+      value: null
+    - name: output_path
+      flag: --out
+      default: null
+      type: Path
+      help: Output path
+      required: true
+      value: null
+    - name: glob
+      flag: --glob
+      default: "**/*.*lz4*"
+      type: str
+      help: 'Glob pattern (default: "**/*.*lz4*")'
+      required: false
+      set: false
+      value: null
+    - name: append_csv
+      flag: --append
+      type: bool
+      help: Append to existing CSVs instead of overwriting
+      required: false
+      set: false
+    - name: classify
+      flag: --classify
+      choices:
+        - move
+        - copy
+        - link
+        - none
+      type: str
+      default: link
+      help: "Move/copy/link each source into category folders under --out (default: link)"
+      required: false
+      set: true
+      value: link
+    - name: preserve_tree
+      flag: --preserve-tree
+      type: bool
+      help: Preserve original relative path under category folders
+      required: false
+      set: false
+    - name: dry_run
+      flag: --dry-run
+      type: bool
+      help: Show planned file operations without performing them
+      required: false
+      set: false
+    - name: delete_source
+      flag: --delete-source
+      type: bool
+      help: Delete source JSONLZ4 files after successful CSV export (saves disk space)
+      required: false
+      set: false
