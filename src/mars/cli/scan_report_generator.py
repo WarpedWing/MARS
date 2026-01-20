@@ -574,7 +574,14 @@ class ScanReportGenerator:
             from rich.prompt import Confirm
 
             if Confirm.ask("\n[cyan]Open report in browser?[/cyan]", default=True):
-                webbrowser.open(f"file://{report_path}")
+                import subprocess
+                import sys
+
+                if sys.platform == "darwin":
+                    # Use 'open' command on macOS to respect default browser
+                    subprocess.run(["open", str(report_path)], check=False)
+                else:
+                    webbrowser.open(f"file://{report_path}")
             return
         except Exception:
             pass  # Fail silently if no terminal

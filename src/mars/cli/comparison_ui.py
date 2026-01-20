@@ -209,9 +209,16 @@ class ComparisonUI:
 
             # Offer to open report
             if Confirm.ask("\nOpen report in browser?", default=True):
-                import webbrowser
+                import subprocess
+                import sys
 
-                webbrowser.open(f"file://{html_path}")
+                if sys.platform == "darwin":
+                    # Use 'open' command on macOS to respect default browser
+                    subprocess.run(["open", str(html_path)], check=False)
+                else:
+                    import webbrowser
+
+                    webbrowser.open(f"file://{html_path}")
 
         except Exception as e:
             self.console.print(f"[bold red]Error generating report:[/bold red] {e}")
