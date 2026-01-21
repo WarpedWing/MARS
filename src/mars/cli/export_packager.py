@@ -2766,13 +2766,20 @@ class ExportPackager:
                 try:
                     dst_cur.execute(modified_sql)
                 except sqlite3.Error as e:
-                    logger.debug(f"Could not create table {table_name}: {e}")
-                    continue
+                    err_msg = str(e).lower()
+                    if "already exists" in err_msg:
+                        # Table exists (e.g., FTS shadow table auto-created) - still copy data
+                        logger.debug(f"Table {table_name} already exists, will copy data")
+                    else:
+                        logger.debug(f"Could not create table {table_name}: {e}")
+                        continue
 
-                # Skip data copy for FTS tables - they either:
+                # Skip data copy for FTS virtual tables - they either:
                 # 1. Derive data from content tables (external content) - rebuilt later
                 # 2. Have data in shadow tables (internal content) - copied separately
                 # Attempting to SELECT from source FTS would fail if it uses unknown tokenizers
+                # Note: FTS shadow tables (like messages_content) are NOT virtual tables
+                # and should have their data copied normally
                 if is_fts:
                     continue
 
