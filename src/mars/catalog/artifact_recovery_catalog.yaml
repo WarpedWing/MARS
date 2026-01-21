@@ -239,6 +239,15 @@ chrome:
     notes: Contains encrypted passwords - requires decryption key from Keychain
     exemplar_pattern: databases/catalog/Chrome Login Data*
 
+  - name: Chrome Local State
+    glob_pattern: "Users/*/Library/Application Support/Google/Chrome/Local State"
+    file_type: log
+    scope: user
+    multi_profile: true
+    description: Chrome local state file (JSON format)
+    notes: Contains profile info, settings, and encryption key for Login Data
+    exemplar_pattern: logs/Chrome Local State*
+
   - name: Chrome Web Data
     glob_pattern: "Users/*/Library/Application Support/Google/Chrome/*/Web Data"
     file_type: database
