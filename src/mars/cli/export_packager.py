@@ -7,6 +7,7 @@ databases to their canonical macOS filenames.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shutil
@@ -43,6 +44,26 @@ __all__ = [
     "ExportSource",
     "ExportStructure",
 ]
+
+
+def _robust_text_factory(data: bytes) -> str | bytes:
+    """Text factory that handles BLOB data stored in TEXT columns.
+
+    SQLite's dynamic typing allows BLOB data to be stored in TEXT/VARCHAR columns.
+    Python's sqlite3 module by default tries to decode TEXT columns as UTF-8,
+    which fails for binary data. This factory tries UTF-8 first and falls back
+    to returning raw bytes for non-decodable content.
+
+    Args:
+        data: Raw bytes from SQLite
+
+    Returns:
+        Decoded string if valid UTF-8, otherwise raw bytes
+    """
+    try:
+        return data.decode("utf-8")
+    except (UnicodeDecodeError, AttributeError):
+        return data
 
 
 def _safe_relative_path(path: Path, base: Path) -> str:
@@ -2149,9 +2170,14 @@ class ExportPackager:
             self._copy_metadata(exemplar_folder, combined_folder)
             return
 
-        # Copy exemplar database
         combined_db = combined_folder / exemplar_db.name
-        shutil.copy2(exemplar_db, combined_db)
+
+        # Create combined database with proper schema
+        # Use _create_combined_database to avoid ALTER TABLE corruption issues
+        if track_data_source:
+            self._create_combined_database(combined_db, exemplar_db, add_data_source=True, source_tag="exemplar")
+        else:
+            shutil.copy2(exemplar_db, combined_db)
 
         # If we have a candidate, merge unique rows
         if candidate_folder:
@@ -2188,9 +2214,14 @@ class ExportPackager:
             self._copy_metadata(exemplar_folder, combined_folder)
             return
 
-        # Copy exemplar database
         combined_db = combined_folder / exemplar_db.name
-        shutil.copy2(exemplar_db, combined_db)
+
+        # Create combined database with proper schema
+        # Use _create_combined_database to avoid ALTER TABLE corruption issues
+        if track_data_source:
+            self._create_combined_database(combined_db, exemplar_db, add_data_source=True, source_tag="exemplar")
+        else:
+            shutil.copy2(exemplar_db, combined_db)
 
         # If we have a candidate, merge unique rows
         if candidate_folder:
@@ -2397,13 +2428,27 @@ class ExportPackager:
         Returns:
             Total number of rows added
         """
+        # Backup before ALTER TABLE to recover from schema corruption
+        backup_path = None
+        if track_data_source:
+            backup_path = base_db.with_suffix(".sqlite.backup")
+            try:
+                shutil.copy2(base_db, backup_path)
+            except OSError:
+                backup_path = None
+
         total_added = 0
+        schema_error = False
 
         try:
             with (
                 sqlite3.connect(base_db) as base_conn,
                 readonly_connection(candidate_db) as cand_conn,
             ):
+                # Handle BLOB data stored in TEXT columns (SQLite dynamic typing)
+                base_conn.text_factory = _robust_text_factory
+                cand_conn.text_factory = _robust_text_factory
+
                 # Get common tables (skip system and L&F tables)
                 base_tables = self._get_user_tables(base_conn)
                 cand_tables = self._get_user_tables(cand_conn)
@@ -2414,18 +2459,46 @@ class ExportPackager:
                         rows_added = self._merge_table_rows(base_conn, cand_conn, table_name, track_data_source)
                         total_added += rows_added
                     except sqlite3.Error as e:
+                        err = str(e).lower()
+                        if "malformed database schema" in err or "after add column" in err:
+                            logger.debug(f"Schema error in {table_name}, will retry: {e}")
+                            schema_error = True
+                            break
                         logger.debug(f"Error merging table {table_name}: {e}")
                         continue
 
-                base_conn.commit()
+                if not schema_error:
+                    base_conn.commit()
 
         except sqlite3.Error as e:
-            logger.warning(f"Error merging databases: {e}")
+            if "malformed database schema" in str(e).lower():
+                schema_error = True
+            else:
+                logger.warning(f"Error merging databases: {e}")
+
+        # Restore from backup and retry without data_source tracking
+        if schema_error and backup_path and backup_path.exists():
+            logger.debug(f"Restoring {base_db.name} from backup, retrying without data_source")
+            try:
+                shutil.copy2(backup_path, base_db)
+                total_added = self._merge_unique_rows(base_db, candidate_db, track_data_source=False)
+            except OSError as e:
+                logger.warning(f"Could not restore backup: {e}")
+
+        # Clean up backup
+        if backup_path and backup_path.exists():
+            with contextlib.suppress(OSError):
+                backup_path.unlink()
 
         return total_added
 
     def _get_user_tables(self, conn: sqlite3.Connection) -> list[str]:
-        """Get list of user tables (excluding system and L&F tables).
+        """Get list of user tables (excluding system, L&F, and FTS tables).
+
+        FTS virtual tables are excluded because:
+        1. They may use unknown tokenizers (e.g., Apple's ab_cf_tokenizer)
+        2. Their data is derived from content tables, not stored directly
+        3. They're handled separately in _create_combined_database()
 
         Args:
             conn: Database connection
@@ -2434,13 +2507,23 @@ class ExportPackager:
             List of table names
         """
         cur = conn.cursor()
+        # Get tables with their CREATE statements to identify FTS tables
         cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
+            "SELECT name, sql FROM sqlite_master WHERE type='table' "
             "AND name NOT LIKE 'sqlite_%' "
             "AND name NOT LIKE 'lost_and_found%' "
             "AND name NOT LIKE 'lf_%'"
         )
-        return [row[0] for row in cur.fetchall()]
+        tables = []
+        for name, sql in cur.fetchall():
+            # Skip FTS virtual tables (they may have unknown tokenizers)
+            if sql and re.search(r"USING\s+fts[345]", sql, re.IGNORECASE):
+                continue
+            # Also skip FTS shadow tables (e.g., entity_fts_content, _docsize, _segdir)
+            if re.match(r".*_(?:content|docsize|segdir|segments|stat|config|data|idx)$", name, re.IGNORECASE):
+                continue
+            tables.append(name)
+        return tables
 
     def _get_table_primary_key(self, conn: sqlite3.Connection, table_name: str) -> str | None:
         """Get primary key column for a table.
@@ -2480,8 +2563,288 @@ class ExportPackager:
         except sqlite3.Error:
             return []
 
+    def _substitute_fts_tokenizer(self, create_sql: str) -> str:
+        """Substitute unknown FTS tokenizers with unicode61.
+
+        Apple databases use custom tokenizers (like ab_cf_tokenizer based on
+        CFStringTokenizer) that aren't available in standard SQLite. This
+        substitutes them with unicode61 which provides similar Unicode-aware
+        word boundary detection.
+
+        Args:
+            create_sql: Original CREATE VIRTUAL TABLE statement
+
+        Returns:
+            Modified statement with standard tokenizer, or original if no change needed
+        """
+        # Only process FTS tables
+        if not re.search(r"USING\s+fts[345]", create_sql, re.IGNORECASE):
+            return create_sql
+
+        # Built-in tokenizers that don't need substitution
+        builtin_tokenizers = {"unicode61", "ascii", "porter", "trigram"}
+
+        # Try to extract tokenizer specification
+        # Format 1: tokenize='...' or tokenize="..." (quoted)
+        tokenize_match = re.search(r"tokenize\s*=\s*['\"]([^'\"]+)['\"]", create_sql, re.IGNORECASE)
+        if tokenize_match:
+            tokenizer_spec = tokenize_match.group(1)
+            tokenizer_name = tokenizer_spec.split()[0].lower()
+
+            if tokenizer_name in builtin_tokenizers:
+                return create_sql
+
+            # Substitute with unicode61
+            logger.debug(f"Substituting unknown tokenizer '{tokenizer_name}' with 'unicode61'")
+            new_sql = re.sub(
+                r"(tokenize\s*=\s*['\"])[^'\"]+(['\"])",
+                r"\1unicode61\2",
+                create_sql,
+                flags=re.IGNORECASE,
+            )
+            return new_sql
+
+        # Format 2: tokenize=name or tokenize=name arg1 arg2 (unquoted)
+        # Match tokenize= followed by everything up to the next , or )
+        # This captures the full tokenize spec including any arguments
+        tokenize_match = re.search(r"tokenize\s*=\s*([^,)]+)", create_sql, re.IGNORECASE)
+        if tokenize_match:
+            tokenizer_spec = tokenize_match.group(1).strip()
+            # Skip if this looks quoted (handled above)
+            if tokenizer_spec.startswith(("'", '"')):
+                return create_sql
+
+            tokenizer_name = tokenizer_spec.split()[0].lower()
+
+            if tokenizer_name in builtin_tokenizers:
+                return create_sql
+
+            # Substitute entire tokenize spec with unicode61 (quoted for safety)
+            logger.debug(f"Substituting unknown unquoted tokenizer '{tokenizer_name}' with 'unicode61'")
+            logger.debug(f"  Original SQL: {create_sql[:200]}...")
+            new_sql = re.sub(
+                r"tokenize\s*=\s*[^,)]+",
+                "tokenize='unicode61'",
+                create_sql,
+                flags=re.IGNORECASE,
+            )
+            logger.debug(f"  Modified SQL: {new_sql[:200]}...")
+            return new_sql
+
+        # No tokenizer specified, use default
+        return create_sql
+
+    def _add_data_source_to_schema(self, create_sql: str) -> str:
+        """Modify a CREATE TABLE statement to include data_source column.
+
+        This avoids using ALTER TABLE which can corrupt databases with
+        Apple-specific schema extensions that Python's SQLite can't parse.
+
+        Args:
+            create_sql: Original CREATE TABLE statement
+
+        Returns:
+            Modified CREATE TABLE statement with data_source TEXT column
+        """
+        # Skip if data_source already present
+        if "data_source" in create_sql.lower():
+            return create_sql
+
+        # Skip FTS virtual tables - don't modify them
+        if re.search(r"USING\s+fts[345]", create_sql, re.IGNORECASE):
+            return create_sql
+
+        # Remove STRICT keyword to allow BLOB data in TEXT columns
+        create_sql = re.sub(r"\s+STRICT\b", "", create_sql, flags=re.IGNORECASE)
+
+        # Remove trailing ) WITHOUT ROWID or ); or )
+        stripped_sql = create_sql.rstrip()
+        has_semicolon = stripped_sql.endswith(");")
+        has_without_rowid = bool(re.search(r"\)\s*WITHOUT\s+ROWID", stripped_sql, re.IGNORECASE))
+
+        # Remove trailing bits
+        if has_without_rowid:
+            stripped_sql = re.sub(
+                r"\)\s*WITHOUT\s+ROWID\s*;?\s*$",
+                "",
+                stripped_sql,
+                flags=re.IGNORECASE,
+            )
+        elif has_semicolon:
+            stripped_sql = stripped_sql[:-2]
+        elif stripped_sql.endswith(")"):
+            stripped_sql = stripped_sql[:-1]
+
+        # Look for table-level constraints (must come AFTER all column definitions)
+        constraint_pattern = (
+            r",\s*("
+            r"PRIMARY\s+KEY\s*\(|"
+            r"FOREIGN\s+KEY\s*\(|"
+            r"UNIQUE\s*\(|"
+            r"CHECK\s*\(|"
+            r"CONSTRAINT\s+\w+"
+            r")"
+        )
+        match = re.search(constraint_pattern, stripped_sql, re.IGNORECASE)
+
+        if match:
+            # Insert data_source BEFORE the first table-level constraint
+            insertion_point = match.start()
+            create_sql = stripped_sql[:insertion_point] + ",\n    data_source TEXT" + stripped_sql[insertion_point:]
+        else:
+            # No table-level constraints, add at the end
+            create_sql = stripped_sql + ",\n    data_source TEXT"
+
+        # Re-add closing paren and optional clauses
+        create_sql += "\n)"
+        if has_without_rowid:
+            create_sql += " WITHOUT ROWID"
+        if has_semicolon:
+            create_sql += ";"
+
+        return create_sql
+
+    def _create_combined_database(
+        self,
+        output_db: Path,
+        source_db: Path,
+        add_data_source: bool = True,
+        source_tag: str = "exemplar",
+    ) -> None:
+        """Create a new database with schema from source, optionally adding data_source column.
+
+        This creates a fresh database instead of copying and using ALTER TABLE,
+        which avoids schema corruption issues with Apple-specific SQL extensions.
+
+        Args:
+            output_db: Path for new database
+            source_db: Path to source database (exemplar)
+            add_data_source: If True, add data_source column to all tables
+            source_tag: Value to use for data_source column (e.g., 'exemplar')
+        """
+        # Remove existing file if present
+        if output_db.exists():
+            output_db.unlink()
+
+        with (
+            sqlite3.connect(output_db) as dst_conn,
+            readonly_connection(source_db) as src_conn,
+        ):
+            # Handle BLOB data stored in TEXT columns
+            dst_conn.text_factory = _robust_text_factory
+            src_conn.text_factory = _robust_text_factory
+
+            dst_conn.execute("PRAGMA journal_mode=WAL")
+            dst_conn.execute("PRAGMA synchronous=NORMAL")
+
+            src_cur = src_conn.cursor()
+            dst_cur = dst_conn.cursor()
+
+            # Get all tables and their schemas
+            tables = src_cur.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+
+            # Track FTS virtual tables for later rebuild
+            fts_tables: list[tuple[str, str]] = []
+
+            for table_name, create_sql in tables:
+                if not create_sql:
+                    continue
+
+                # Track FTS virtual tables for later rebuild
+                is_fts = bool(re.search(r"USING\s+fts[345]", create_sql, re.IGNORECASE))
+                if is_fts:
+                    fts_tables.append((table_name, create_sql))
+                    # Substitute unknown tokenizers (like Apple's ab_cf_tokenizer) with unicode61
+                    modified_sql = self._substitute_fts_tokenizer(create_sql)
+                else:
+                    # Modify schema to include data_source if requested
+                    modified_sql = self._add_data_source_to_schema(create_sql) if add_data_source else create_sql
+
+                # Create the table
+                try:
+                    dst_cur.execute(modified_sql)
+                except sqlite3.Error as e:
+                    logger.debug(f"Could not create table {table_name}: {e}")
+                    continue
+
+                # Skip data copy for FTS tables - they either:
+                # 1. Derive data from content tables (external content) - rebuilt later
+                # 2. Have data in shadow tables (internal content) - copied separately
+                # Attempting to SELECT from source FTS would fail if it uses unknown tokenizers
+                if is_fts:
+                    continue
+
+                # Get column names from source table
+                src_cols = [
+                    row[1] for row in src_cur.execute(f"PRAGMA table_info({quote_ident(table_name)})").fetchall()
+                ]
+                if not src_cols:
+                    continue
+
+                # Copy data from source to destination
+                quoted_cols = ", ".join(quote_ident(c) for c in src_cols)
+                qname = quote_ident(table_name)
+
+                # Check if destination table actually has data_source column
+                # (FTS virtual tables and others may not have it even if we requested it)
+                dst_cols = [
+                    row[1] for row in dst_cur.execute(f"PRAGMA table_info({quote_ident(table_name)})").fetchall()
+                ]
+                dst_has_data_source = "data_source" in [c.lower() for c in dst_cols]
+
+                # If tracking data_source and destination has the column, add the tag to each row
+                # Use INSERT OR IGNORE to handle any edge cases with duplicate PKs
+                if add_data_source and dst_has_data_source and "data_source" not in [c.lower() for c in src_cols]:
+                    # Source doesn't have data_source but destination does, add it
+                    insert_cols = quoted_cols + ", data_source"
+                    placeholders = ", ".join(["?"] * len(src_cols)) + ", ?"
+
+                    rows = src_cur.execute(f"SELECT {quoted_cols} FROM {qname}").fetchall()
+                    for row in rows:
+                        dst_cur.execute(
+                            f"INSERT OR IGNORE INTO {qname} ({insert_cols}) VALUES ({placeholders})",
+                            (*row, source_tag),
+                        )
+                else:
+                    # Just copy as-is (FTS tables, tables that already have data_source, etc.)
+                    placeholders = ", ".join(["?"] * len(src_cols))
+                    rows = src_cur.execute(f"SELECT {quoted_cols} FROM {qname}").fetchall()
+                    for row in rows:
+                        dst_cur.execute(
+                            f"INSERT OR IGNORE INTO {qname} ({quoted_cols}) VALUES ({placeholders})",
+                            row,
+                        )
+
+            # Copy indexes (excluding auto-generated ones)
+            indexes = src_cur.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+            for (index_sql,) in indexes:
+                with contextlib.suppress(sqlite3.Error):
+                    dst_cur.execute(index_sql)
+
+            # Rebuild external content FTS tables
+            # These tables reference separate content tables and need to be re-indexed
+            # after the content is copied. See: https://www.sqlite.org/fts5.html
+            for fts_name, fts_sql in fts_tables:
+                # Check if this is an external content table (content='table_name')
+                if "content=" in fts_sql.lower() or "content =" in fts_sql.lower():
+                    try:
+                        q_fts = quote_ident(fts_name)
+                        dst_cur.execute(f"INSERT INTO {q_fts}({q_fts}) VALUES('rebuild');")
+                        logger.debug(f"Rebuilt FTS index for: {fts_name}")
+                    except sqlite3.OperationalError as e:
+                        logger.debug(f"Could not rebuild FTS index for {fts_name}: {e}")
+
+            dst_conn.commit()
+
     def _add_data_source_column(self, conn: sqlite3.Connection, table_name: str) -> bool:
         """Add data_source column to a table if not present.
+
+        NOTE: This uses ALTER TABLE which can fail on databases with Apple-specific
+        schema extensions. Prefer _create_combined_database() for new databases.
 
         Args:
             conn: Database connection
@@ -2560,9 +2923,14 @@ class ExportPackager:
             logger.debug(f"No common columns for {table_name}, skipping merge")
             return 0
 
-        # If tracking data_source, add column and tag existing rows as 'exemplar'
-        if track_data_source and self._add_data_source_column(base_conn, table_name):
-            self._tag_existing_rows(base_conn, table_name, "exemplar")
+        # Check if base already has data_source column (should be there from _create_combined_database)
+        # Do NOT use ALTER TABLE to add it - that can corrupt databases with Apple-specific schemas
+        base_has_data_source = "data_source" in base_cols
+        if track_data_source and not base_has_data_source:
+            # Column wasn't created during database setup - skip data_source tracking for this table
+            # but continue with the merge
+            logger.debug(f"Table {table_name} missing data_source column, skipping provenance tracking")
+            track_data_source = False
 
         # Always use content hash comparison, excluding PK/ID columns
         # PK comparison is unreliable because recovered data gets new PKs
