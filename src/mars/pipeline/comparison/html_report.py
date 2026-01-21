@@ -935,13 +935,13 @@ def _build_database_table_rows(databases: list[DatabaseComparison]) -> str:
         lf_rows = db.lost_and_found.total_rows
         lf_badge = f'<span class="badge badge-warning">{lf_rows:,}</span>' if lf_rows > 0 else "-"
 
-        # Determine source type: Carved, Carved + L&F, or Rebuilt
+        # Determine source type badge
         if db.rebuilt_from_lf:
             source_badge = '<span class="badge" style="background: #fef3c7; color: #92400e;">L&F</span>'
         elif lf_rows > 0:
-            source_badge = '<span class="badge" style="background: #dbeafe; color: #1e40af;">Carved + L&F</span>'
+            source_badge = '<span class="badge" style="background: #dbeafe; color: #1e40af;">Cand + L&F</span>'
         else:
-            source_badge = '<span class="badge" style="background: #dcfce7; color: #166534;">Carved</span>'
+            source_badge = '<span class="badge" style="background: #dcfce7; color: #166534;">Candidate</span>'
 
         row = f"""<tr>
             <td>{db.name}</td>
