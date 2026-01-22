@@ -388,6 +388,7 @@ def reconstruct_exemplar_database(
                     exemplar_schemas_dir=(exemplar_db_dir / "schemas" / exemplar_name if exemplar_db_dir else None),
                     rubric_metadata=rubric_metadata,
                     skip_semantic_validation=skip_semantic_validation,
+                    skip_byteswap_correction=skip_semantic_validation,  # TM candidates don't need byte-swap
                 )
                 total_intact_rows += rows
                 intact_rows_per_source[db_name] += rows
