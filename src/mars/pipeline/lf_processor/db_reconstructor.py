@@ -336,6 +336,11 @@ def detect_and_fix_byteswapped_text(text: str) -> tuple[str, bool]:
         - `祳瑳浥業牧瑡潩摮` → `systemmigrationd`
         - `潣⹭灡汰⹥敮扴潩摳` → `com.apple.netbiosd`
 
+    IMPORTANT: Only applies to strings that are MOSTLY high codepoints (>50%).
+    Strings with occasional Unicode chars (like `…` ellipsis, emoji, accented chars)
+    mixed with ASCII should NOT be "corrected" - those are valid Unicode, not
+    byte-swapped ASCII. The ellipsis `…` (U+2026) would incorrectly become `& `.
+
     Args:
         text: String to check and potentially correct
 
@@ -345,10 +350,18 @@ def detect_and_fix_byteswapped_text(text: str) -> tuple[str, bool]:
     if not text or not isinstance(text, str):
         return text, False
 
-    # Check if string contains high codepoints (CJK or other non-ASCII)
+    # Count characters with high codepoints (CJK or other non-ASCII > 0xFF)
     # that could be misinterpreted UTF-16LE pairs
-    has_high_codepoints = any(ord(c) > 0xFF for c in text)
-    if not has_high_codepoints:
+    high_codepoint_count = sum(1 for c in text if ord(c) > 0xFF)
+    if high_codepoint_count == 0:
+        return text, False
+
+    # Only apply correction if MOST of the string is high codepoints (>50%)
+    # This prevents "correcting" valid Unicode like `…` (U+2026) which would
+    # incorrectly become `& ` (0x26 + 0x20)
+    # True byte-swapped ASCII appears as entirely CJK characters
+    high_ratio = high_codepoint_count / len(text)
+    if high_ratio < 0.5:
         return text, False
 
     # Split each character into its two component bytes (little-endian)
@@ -826,6 +839,7 @@ def copy_table_data_with_provenance(
     exemplar_schemas_dir: Path | None = None,
     rubric_metadata: dict | None = None,
     skip_semantic_validation: bool = False,
+    skip_byteswap_correction: bool = False,
 ) -> int:
     """
     Copy data from source table to target table, adding data_source column.
@@ -840,6 +854,8 @@ def copy_table_data_with_provenance(
         rubric_metadata: Optional pre-loaded rubric metadata dict (avoids loading on every call)
         skip_semantic_validation: Skip semantic role validation (for TM candidates where
             we want to accept all data without rejection). Type affinity checks still apply.
+        skip_byteswap_correction: Skip byte-swap text correction (for TM candidates where
+            data integrity is assured and we don't want to risk corrupting valid Unicode).
 
     Returns:
         Number of rows copied
@@ -1093,10 +1109,12 @@ def copy_table_data_with_provenance(
                     continue  # Skip this malformed row from main database
 
                 # Apply byte-swap correction for CJK text that's actually ASCII
-                corrected_row, num_corrections = fix_byteswapped_row(row)
-                if num_corrections > 0:
-                    rows_byteswap_corrected += 1
-                    row = corrected_row
+                # Skip for TM candidates where data integrity is assured
+                if not skip_byteswap_correction:
+                    corrected_row, num_corrections = fix_byteswapped_row(row)
+                    if num_corrections > 0:
+                        rows_byteswap_corrected += 1
+                        row = corrected_row
 
                 row_with_source = list(row) + [data_source_value]
                 cursor_result = target_con.execute(insert_sql, row_with_source)
