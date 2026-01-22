@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 import sqlite3
+import tempfile
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING
 
@@ -569,6 +570,10 @@ def readonly_connection(db_path: Path, immutable: bool = True) -> Iterator[sqlit
     Opens database in read-only mode using URI parameter.
     Automatically handles connection cleanup.
 
+    On macOS, Time Machine files may be blocked by Gatekeeper when they
+    appear to be "Unix Executable Files". If direct open fails, this
+    function copies the file to a temp location and opens from there.
+
     Args:
         db_path: Path to SQLite database
         immutable: Use immutable flag for source databases (default True).
@@ -584,14 +589,64 @@ def readonly_connection(db_path: Path, immutable: bool = True) -> Iterator[sqlit
         ...     cursor.execute("SELECT * FROM table")
         ...     results = cursor.fetchall()
     """
-    if immutable:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
-    else:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    from pathlib import Path as PathClass  # Avoid type checking import issue
+
+    temp_path: PathClass | None = None
+    conn: sqlite3.Connection | None = None
+
+    try:
+        # Try direct connection first
+        if immutable:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        else:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+
+        # Test that we can actually read from the database file
+        # SELECT 1 doesn't read from disk - must query sqlite_master
+        # macOS security blocking manifests when actually reading file contents
+        conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+
+    except sqlite3.DatabaseError as e:
+        err_msg = str(e).lower()
+        # macOS blocks files it considers "Unix Executables" with this error
+        # Also handle "unable to open database file" which can occur
+        if "not a database" in err_msg or "unable to open" in err_msg:
+            if conn:
+                with suppress(Exception):
+                    conn.close()
+                conn = None
+
+            # Copy file to temp location with .sqlite extension
+            # This bypasses macOS Gatekeeper's file type check
+            temp_dir = PathClass(tempfile.mkdtemp(prefix="mars_db_"))
+            temp_path = temp_dir / f"{db_path.stem}.sqlite"
+
+            logger.debug(f"macOS blocked {db_path.name}, copying to temp: {temp_path}")
+            shutil.copy2(db_path, temp_path)
+
+            # Also copy WAL and SHM files if they exist
+            for suffix in ["-wal", "-shm"]:
+                wal_path = db_path.parent / f"{db_path.name}{suffix}"
+                if wal_path.exists():
+                    shutil.copy2(wal_path, temp_path.parent / f"{temp_path.name}{suffix}")
+
+            if immutable:
+                conn = sqlite3.connect(f"file:{temp_path}?mode=ro&immutable=1", uri=True)
+            else:
+                conn = sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True)
+        else:
+            raise
+
     try:
         yield conn
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+        # Clean up temp file if we created one
+        if temp_path and temp_path.exists():
+            temp_dir = temp_path.parent
+            with suppress(Exception):
+                shutil.rmtree(temp_dir)
 
 
 @contextmanager
