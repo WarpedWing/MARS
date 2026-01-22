@@ -541,18 +541,22 @@ class ExportPackager:
                     if match.stat().st_size == 0:
                         continue
                     return match, False
-                # If only auxiliary, combined, or empty files, try again without size check
+                # If only combined or empty files, try again without size check
+                # Still skip auxiliary files (-shm, -wal, -journal) and .combined.db
                 for match in matches:
-                    if match.name.endswith(".combined.db"):
+                    if match.name.endswith((".combined.db", "-shm", "-wal", "-journal")):
                         continue
                     return match, False
 
-        # Fallback: look for any file that's not provenance/metadata/hidden
+        # Fallback: look for any file that's not provenance/metadata/hidden/auxiliary
+        # Chrome DBs have no extension - named 'Cookies', 'History', etc.
         for f in catalog_folder.iterdir():
             if (
                 f.is_file()
                 and not f.name.startswith(".")
                 and not f.name.endswith((".json", ".md", ".txt", ".combined.db"))
+                # Skip SQLite auxiliary files (WAL, shared memory, journal)
+                and not f.name.endswith(("-shm", "-wal", "-journal"))
             ):
                 return f, False
 
@@ -1868,12 +1872,14 @@ class ExportPackager:
                             track_data_source,
                         )
                     else:
-                        # Candidate has flat structure - copy exemplar profiles pristine
+                        # Candidate has flat structure - copy exemplar profiles
+                        # Still use track_data_source since candidate data may be merged later
+                        # via _merge_candidate_into_profile()
                         self._combine_profile_folder(
                             profile_folder,
                             combined_folder / profile_name,
-                            None,  # Don't merge - keep pristine
-                            track_data_source=False,  # No mixed sources here
+                            None,  # Don't merge yet - will be merged below if candidate exists
+                            track_data_source,  # Must add data_source for later merging
                         )
 
                 # If candidate has flat structure, merge based on its profile(s)
@@ -2229,7 +2235,9 @@ class ExportPackager:
             if candidate_db:
                 rows_added = self._merge_unique_rows(combined_db, candidate_db, track_data_source)
                 if rows_added > 0:
-                    logger.debug(f"Merged {rows_added} unique rows into {combined_folder.name}")
+                    logger.debug(
+                        f"Merged {rows_added} unique rows from {candidate_db.name} into {combined_folder.name}/{combined_db.name}"
+                    )
 
         # Copy metadata files (provenance, etc.)
         self._copy_metadata(exemplar_folder, combined_folder)
@@ -2279,7 +2287,10 @@ class ExportPackager:
 
         # Merge unique rows from candidate into profile
         rows_added = self._merge_unique_rows(profile_db, candidate_db, track_data_source)
-        logger.debug(f"Merged {rows_added} unique rows from candidate into {target_profile_folder.name}")
+        logger.debug(
+            f"Merged {rows_added} unique rows from {candidate_db.name} into "
+            f"{target_profile_folder.parent.name}/{target_profile_folder.name}/{profile_db.name}"
+        )
 
     def _merge_candidate_into_multi(
         self,
@@ -2449,6 +2460,11 @@ class ExportPackager:
                 base_conn.text_factory = _robust_text_factory
                 cand_conn.text_factory = _robust_text_factory
 
+                # Drop unique indexes to allow all data during forensic merge
+                # Application-level constraints (e.g., Chrome's one-cookie-per-domain)
+                # aren't relevant for forensic analysis - we want ALL data preserved
+                self._drop_unique_indexes(base_conn)
+
                 # Get common tables (skip system and L&F tables)
                 base_tables = self._get_user_tables(base_conn)
                 cand_tables = self._get_user_tables(cand_conn)
@@ -2475,6 +2491,8 @@ class ExportPackager:
                 schema_error = True
             else:
                 logger.warning(f"Error merging databases: {e}")
+                logger.warning(f"  Base: {base_db}")
+                logger.warning(f"  Candidate: {candidate_db}")
 
         # Restore from backup and retry without data_source tracking
         if schema_error and backup_path and backup_path.exists():
@@ -2563,6 +2581,36 @@ class ExportPackager:
         except sqlite3.Error:
             return []
 
+    def _drop_unique_indexes(self, conn: sqlite3.Connection) -> int:
+        """Drop all unique indexes from database to allow duplicate data during merge.
+
+        For forensic purposes, we want to preserve ALL data from all sources,
+        even if rows would conflict on application-level unique constraints.
+        The unique constraints are for application functionality (e.g., Chrome
+        ensuring one cookie per domain/name/path), not for forensic analysis.
+
+        Args:
+            conn: Database connection (must be writable)
+
+        Returns:
+            Number of indexes dropped
+        """
+        cur = conn.cursor()
+        # Find all unique indexes (not auto-created by UNIQUE column constraints)
+        cur.execute("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL AND sql LIKE '%UNIQUE%'")
+        unique_indexes = [row[0] for row in cur.fetchall()]
+
+        dropped = 0
+        for idx_name in unique_indexes:
+            try:
+                cur.execute(f"DROP INDEX IF EXISTS {quote_ident(idx_name)}")
+                logger.debug(f"Dropped unique index {idx_name} for forensic merge")
+                dropped += 1
+            except sqlite3.Error as e:
+                logger.debug(f"Could not drop index {idx_name}: {e}")
+
+        return dropped
+
     def _substitute_fts_tokenizer(self, create_sql: str) -> str:
         """Substitute unknown FTS tokenizers with unicode61.
 
@@ -2634,6 +2682,134 @@ class ExportPackager:
         # No tokenizer specified, use default
         return create_sql
 
+    def _strip_pk_constraints(self, create_sql: str) -> str:
+        """Remove non-rowid PRIMARY KEY constraints from CREATE TABLE statement.
+
+        For forensic merging, we need to accept rows with the same PK but different
+        content (e.g., same cookie with different timestamps from different sources).
+        Stripping PK constraints allows INSERT to succeed for such rows.
+
+        IMPORTANT: We PRESERVE `INTEGER PRIMARY KEY` columns because:
+        - They are aliases for SQLite's internal rowid (auto-generated)
+        - The integer values have no semantic meaning
+        - Rows with identical content but different auto-IDs are true duplicates
+        - Keeping the PK enables proper deduplication via INSERT OR IGNORE
+
+        We STRIP other PKs because:
+        - TEXT/BLOB/composite PKs contain meaningful data (URLs, UUIDs, etc.)
+        - Two rows with same PK but different content should both be kept
+
+        Handles:
+        - Inline INTEGER PRIMARY KEY: PRESERVED (rowid alias, auto-generated)
+        - Inline TEXT/BLOB PRIMARY KEY: stripped (meaningful data)
+        - Table-level PRIMARY KEY (col1, col2): stripped (composite, meaningful)
+        - WITHOUT ROWID tables: removes the clause if PK was stripped
+
+        Args:
+            create_sql: Original CREATE TABLE statement
+
+        Returns:
+            Modified CREATE TABLE statement with semantic PKs removed
+        """
+        # Skip ALL virtual tables - they have different syntax and constraints
+        if re.search(r"CREATE\s+VIRTUAL\s+TABLE", create_sql, re.IGNORECASE):
+            return create_sql
+
+        modified = create_sql
+
+        # Check if this is a WITHOUT ROWID table
+        # In WITHOUT ROWID tables, INTEGER PRIMARY KEY is NOT a rowid alias -
+        # it's a user-provided value with semantic meaning, so we should strip it
+        is_without_rowid = bool(re.search(r"\bWITHOUT\s+ROWID\b", create_sql, re.IGNORECASE))
+
+        # Check if there's an INTEGER PRIMARY KEY (rowid alias) - we want to KEEP these
+        # UNLESS it's a WITHOUT ROWID table (where it's not a rowid alias)
+        # Pattern: INTEGER PRIMARY KEY [AUTOINCREMENT]
+        has_integer_pk = bool(
+            re.search(
+                r"\bINTEGER\s+PRIMARY\s+KEY\b",
+                create_sql,
+                re.IGNORECASE,
+            )
+        )
+
+        # Preserve INTEGER PRIMARY KEY only in normal tables (rowid alias, auto-generated)
+        # Strip it in WITHOUT ROWID tables (user-provided value, semantic meaning)
+        if not has_integer_pk or is_without_rowid:
+            # No INTEGER PRIMARY KEY - strip ALL inline PKs (TEXT PRIMARY KEY, etc.)
+            # These contain meaningful data that we want to preserve even with same PK
+            modified = re.sub(
+                r"\bPRIMARY\s+KEY\s+AUTOINCREMENT\b",
+                "",
+                modified,
+                flags=re.IGNORECASE,
+            )
+            modified = re.sub(
+                r"\bPRIMARY\s+KEY\b(?!\s*\()",  # Negative lookahead for table-level
+                "",
+                modified,
+                flags=re.IGNORECASE,
+            )
+
+        # Always remove table-level PRIMARY KEY constraints (composite keys)
+        # Even if we kept an INTEGER PRIMARY KEY inline, composite keys contain
+        # semantic data (e.g., (url, visit_date)) that we want to allow duplicates for
+        # Pattern: PRIMARY KEY (col1, col2) [ON CONFLICT action]
+        pk_with_conflict = r"PRIMARY\s+KEY\s*\([^)]+\)(?:\s+ON\s+CONFLICT\s+\w+)?"
+
+        # Case 1: PK with leading comma (middle or end of constraints)
+        modified = re.sub(
+            r",\s*" + pk_with_conflict,
+            "",
+            modified,
+            flags=re.IGNORECASE,
+        )
+
+        # Case 2: PK with trailing comma (first constraint)
+        modified = re.sub(
+            pk_with_conflict + r"\s*,",
+            "",
+            modified,
+            flags=re.IGNORECASE,
+        )
+
+        # Case 3: PK as only constraint (standalone, no commas around it)
+        # This handles cases like: CREATE TABLE foo (col1 TEXT, PRIMARY KEY (col1))
+        modified = re.sub(
+            pk_with_conflict,
+            "",
+            modified,
+            flags=re.IGNORECASE,
+        )
+
+        # Remove WITHOUT ROWID clause
+        # WITHOUT ROWID tables require a PRIMARY KEY, and we've stripped
+        # the semantic PKs above. The clause must be removed or SQLite will error.
+        # Note: If we kept an INTEGER PRIMARY KEY (normal table), the table wasn't
+        # WITHOUT ROWID in the first place (since we check is_without_rowid above)
+        if is_without_rowid:
+            modified = re.sub(
+                r"\s*WITHOUT\s+ROWID\b",
+                "",
+                modified,
+                flags=re.IGNORECASE,
+            )
+
+        # Clean up malformed SQL artifacts from constraint removal
+        # 1. Remove double/multiple commas: ,, -> ,
+        modified = re.sub(r",\s*,", ",", modified)
+        # 2. Remove leading comma after opening paren: (, -> (
+        modified = re.sub(r"\(\s*,", "(", modified)
+        # 3. Remove trailing comma before closing paren: ,) -> )
+        modified = re.sub(r",\s*\)", ")", modified)
+        # NOTE: Do NOT clean up multiple spaces or space-before-comma!
+        # Some databases (e.g., PowerLog) have column names with multiple
+        # internal spaces like "AWDL       Aw Dur" that must be preserved.
+        # 4. Clean up whitespace before closing paren only
+        modified = re.sub(r"\s+\)", ")", modified)
+
+        return modified
+
     def _add_data_source_to_schema(self, create_sql: str) -> str:
         """Modify a CREATE TABLE statement to include data_source column.
 
@@ -2646,12 +2822,22 @@ class ExportPackager:
         Returns:
             Modified CREATE TABLE statement with data_source TEXT column
         """
+        # Extract table name for logging
+        table_match = re.search(
+            r"CREATE\s+(?:VIRTUAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['\"]?(\w+)['\"]?", create_sql, re.IGNORECASE
+        )
+        table_name = table_match.group(1) if table_match else "unknown"
+
         # Skip if data_source already present
         if "data_source" in create_sql.lower():
+            logger.debug(f"  Table {table_name}: data_source already present")
             return create_sql
 
-        # Skip FTS virtual tables - don't modify them
-        if re.search(r"USING\s+fts[345]", create_sql, re.IGNORECASE):
+        # Skip ALL virtual tables - they can't have columns added
+        # Virtual tables use: CREATE VIRTUAL TABLE ... USING module_name
+        # This includes FTS tables, echo_* modules, and any custom SQLite extensions
+        if re.search(r"CREATE\s+VIRTUAL\s+TABLE", create_sql, re.IGNORECASE):
+            logger.debug(f"  Table {table_name}: virtual table, skipping data_source")
             return create_sql
 
         # Remove STRICT keyword to allow BLOB data in TEXT columns
@@ -2691,9 +2877,11 @@ class ExportPackager:
             # Insert data_source BEFORE the first table-level constraint
             insertion_point = match.start()
             create_sql = stripped_sql[:insertion_point] + ",\n    data_source TEXT" + stripped_sql[insertion_point:]
+            logger.debug(f"  Table {table_name}: added data_source before constraint")
         else:
             # No table-level constraints, add at the end
             create_sql = stripped_sql + ",\n    data_source TEXT"
+            logger.debug(f"  Table {table_name}: added data_source at end")
 
         # Re-add closing paren and optional clauses
         create_sql += "\n)"
@@ -2701,6 +2889,10 @@ class ExportPackager:
             create_sql += " WITHOUT ROWID"
         if has_semicolon:
             create_sql += ";"
+
+        # Verify data_source was added
+        if "data_source" not in create_sql.lower():
+            logger.warning(f"  Table {table_name}: FAILED to add data_source!")
 
         return create_sql
 
@@ -2759,8 +2951,12 @@ class ExportPackager:
                     # Substitute unknown tokenizers (like Apple's ab_cf_tokenizer) with unicode61
                     modified_sql = self._substitute_fts_tokenizer(create_sql)
                 else:
+                    # Strip PRIMARY KEY constraints for forensic merging
+                    # This allows rows with same PK but different content to be inserted
+                    modified_sql = self._strip_pk_constraints(create_sql)
                     # Modify schema to include data_source if requested
-                    modified_sql = self._add_data_source_to_schema(create_sql) if add_data_source else create_sql
+                    if add_data_source:
+                        modified_sql = self._add_data_source_to_schema(modified_sql)
 
                 # Create the table
                 try:
@@ -2770,6 +2966,21 @@ class ExportPackager:
                     if "already exists" in err_msg:
                         # Table exists (e.g., FTS shadow table auto-created) - still copy data
                         logger.debug(f"Table {table_name} already exists, will copy data")
+                    elif "syntax error" in err_msg:
+                        # PK stripping may have created malformed SQL - try original
+                        logger.debug(f"Syntax error creating {table_name}, trying original schema")
+                        logger.debug(f"  Failed SQL: {modified_sql[:200]}...")
+                        try:
+                            # Try with data_source added but no PK stripping
+                            if add_data_source and not is_fts:
+                                fallback_sql = self._add_data_source_to_schema(create_sql)
+                            else:
+                                fallback_sql = create_sql
+                            dst_cur.execute(fallback_sql)
+                            logger.debug(f"  Fallback succeeded for {table_name}")
+                        except sqlite3.Error as e2:
+                            logger.debug(f"  Fallback also failed: {e2}")
+                            continue
                     else:
                         logger.debug(f"Could not create table {table_name}: {e}")
                         continue
