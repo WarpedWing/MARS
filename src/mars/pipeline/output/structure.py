@@ -25,6 +25,7 @@ from mars.utils.file_utils import (
     MKDIR_KWARGS,
     FileTimestamps,
     compute_md5_hash,
+    get_extended_attributes,
     get_file_timestamps,
 )
 
@@ -784,6 +785,8 @@ class OutputStructure:
                     **file_timestamps.to_dict(),
                     # MARS processing timestamp
                     "processed_at": datetime.now(UTC).isoformat(),
+                    # Extended attributes (quarantine, download sources, etc.)
+                    "extended_attributes": get_extended_attributes(source_path),
                 }
             )
         # Note: Metadata saved at end of scan to avoid race conditions
@@ -860,6 +863,8 @@ class OutputStructure:
                     **file_timestamps.to_dict(),
                     # MARS processing timestamp
                     "processed_at": datetime.now(UTC).isoformat(),
+                    # Extended attributes (quarantine, download sources, etc.)
+                    "extended_attributes": get_extended_attributes(source_path),
                 }
             )
         # Note: Metadata saved at end of scan to avoid race conditions
@@ -936,6 +941,8 @@ class OutputStructure:
                     **file_timestamps.to_dict(),
                     # MARS processing timestamp
                     "processed_at": datetime.now(UTC).isoformat(),
+                    # Extended attributes (quarantine, download sources, etc.)
+                    "extended_attributes": get_extended_attributes(source_path),
                 }
             )
         # Note: Metadata saved at end of scan to avoid race conditions
