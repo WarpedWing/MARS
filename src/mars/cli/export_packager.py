@@ -3047,7 +3047,8 @@ class ExportPackager:
                         logger.debug(f"Table {table_name} already exists, will copy data")
                     elif "syntax error" in err_msg:
                         # PK stripping may have created malformed SQL - try original
-                        logger.debug(f"Syntax error creating {table_name}, trying original schema")
+                        db_name = source_db.name
+                        logger.debug(f"Syntax error creating {table_name} in {db_name}, trying original schema")
                         logger.debug(f"  Failed SQL: {modified_sql[:200]}...")
                         try:
                             # Try with data_source added but no PK stripping
@@ -3056,9 +3057,9 @@ class ExportPackager:
                             else:
                                 fallback_sql = create_sql
                             dst_cur.execute(fallback_sql)
-                            logger.debug(f"  Fallback succeeded for {table_name}")
+                            logger.debug(f"  Fallback succeeded for {table_name} in {db_name}")
                         except sqlite3.Error as e2:
-                            logger.debug(f"  Fallback also failed: {e2}")
+                            logger.debug(f"  Fallback also failed for {table_name} in {db_name}: {e2}")
                             continue
                     else:
                         logger.debug(f"Could not create table {table_name}: {e}")
