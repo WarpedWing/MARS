@@ -2761,6 +2761,118 @@ class ExportPackager:
         # No tokenizer specified, use default
         return create_sql
 
+    def _strip_sql_comments(self, sql: str) -> str:
+        """Remove SQL comments from a statement for cleaner parsing.
+
+        Handles:
+        - Single-line comments: -- comment to end of line
+        - Multi-line comments: /* comment */
+
+        Also joins continuation lines so that inline CHECK constraints stay
+        with their column definitions, making it easier to distinguish them
+        from table-level constraints.
+
+        IMPORTANT: Preserves whitespace inside quoted identifiers (e.g., column
+        names like "AWDL       Aw Dur" must keep their internal spaces).
+
+        Args:
+            sql: SQL statement potentially containing comments
+
+        Returns:
+            SQL with comments removed and lines normalized
+        """
+        # Remove multi-line comments first (they can span lines)
+        result = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+
+        # Remove single-line comments (-- to end of line)
+        # Be careful not to remove -- inside strings, but for CREATE TABLE this is rare
+        result = re.sub(r"--[^\n]*", "", result)
+
+        # Normalize whitespace OUTSIDE of quoted strings/identifiers
+        # We need to preserve spaces inside "quoted identifiers" and 'string literals'
+        # Strategy: split on quotes, only normalize non-quoted segments
+        result = self._normalize_whitespace_preserving_quotes(result)
+
+        # Collapse multiple newlines
+        result = re.sub(r"\n\s*\n", "\n", result)
+
+        # Join continuation lines: if a line doesn't end with comma or opening paren,
+        # join it with the next line. This keeps inline CHECK with its column.
+        # e.g., "version INTEGER\nCHECK (x)" becomes "version INTEGER CHECK (x)"
+        lines = result.strip().split("\n")
+        joined_lines = []
+        current_line = ""
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if current_line:
+                # Check if previous line ended with comma or ( - if so, it's complete
+                if current_line.rstrip().endswith((",", "(")):
+                    joined_lines.append(current_line.strip())
+                    current_line = line
+                else:
+                    # Continuation - join with previous line
+                    current_line = current_line.rstrip() + " " + line
+            else:
+                current_line = line
+
+        if current_line:
+            joined_lines.append(current_line.strip())
+
+        return "\n".join(joined_lines)
+
+    def _normalize_whitespace_preserving_quotes(self, sql: str) -> str:
+        """Normalize whitespace in SQL while preserving content inside quotes.
+
+        Collapses multiple spaces/tabs to single space, but only outside of
+        quoted identifiers ("...") and string literals ('...').
+
+        Args:
+            sql: SQL string to normalize
+
+        Returns:
+            SQL with whitespace normalized outside quotes
+        """
+        result = []
+        i = 0
+        in_quote = None  # Track which quote character we're inside
+
+        while i < len(sql):
+            char = sql[i]
+
+            # Check for quote boundaries
+            if char in ('"', "'") and (i == 0 or sql[i - 1] != "\\"):
+                if in_quote is None:
+                    # Starting a quoted section
+                    in_quote = char
+                    result.append(char)
+                elif in_quote == char:
+                    # Ending a quoted section
+                    in_quote = None
+                    result.append(char)
+                else:
+                    # Different quote inside a quoted section (e.g., ' inside ")
+                    result.append(char)
+            elif in_quote:
+                # Inside quotes - preserve everything as-is
+                result.append(char)
+            elif char in " \t":
+                # Outside quotes - collapse whitespace
+                if result and result[-1] not in " \t\n":
+                    result.append(" ")
+                # Skip additional whitespace
+                while i + 1 < len(sql) and sql[i + 1] in " \t":
+                    i += 1
+            else:
+                result.append(char)
+
+            i += 1
+
+        return "".join(result)
+
     def _strip_pk_constraints(self, create_sql: str) -> str:
         """Remove non-rowid PRIMARY KEY constraints from CREATE TABLE statement.
 
@@ -2901,7 +3013,7 @@ class ExportPackager:
         Returns:
             Modified CREATE TABLE statement with data_source TEXT column
         """
-        # Extract table name for logging
+        # Extract table name for logging (before stripping comments)
         table_match = re.search(
             r"CREATE\s+(?:VIRTUAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['\"]?(\w+)['\"]?", create_sql, re.IGNORECASE
         )
@@ -2919,11 +3031,16 @@ class ExportPackager:
             logger.debug(f"  Table {table_name}: virtual table, skipping data_source")
             return create_sql
 
+        # Strip SQL comments to simplify parsing
+        # Comments like "-- semantic version" can split column definitions across lines,
+        # causing inline CHECK constraints to be mistaken for table-level constraints
+        clean_sql = self._strip_sql_comments(create_sql)
+
         # Remove STRICT keyword to allow BLOB data in TEXT columns
-        create_sql = re.sub(r"\s+STRICT\b", "", create_sql, flags=re.IGNORECASE)
+        clean_sql = re.sub(r"\s+STRICT\b", "", clean_sql, flags=re.IGNORECASE)
 
         # Remove trailing ) WITHOUT ROWID or ); or )
-        stripped_sql = create_sql.rstrip()
+        stripped_sql = clean_sql.rstrip()
         has_semicolon = stripped_sql.endswith(");")
         has_without_rowid = bool(re.search(r"\)\s*WITHOUT\s+ROWID", stripped_sql, re.IGNORECASE))
 
