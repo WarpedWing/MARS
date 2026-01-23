@@ -231,6 +231,64 @@ def get_file_timestamps(path: Path) -> FileTimestamps:
         )
 
 
+def get_extended_attributes(path: Path) -> dict[str, str]:
+    """
+    Get macOS extended attributes for a file.
+
+    Extended attributes contain valuable forensic metadata:
+    - com.apple.quarantine: Download source info (browser, URL)
+    - com.apple.metadata:kMDItemWhereFroms: Source URLs array
+    - com.apple.lastuseddate#PS: Last access time (binary plist)
+    - com.apple.macl: macOS access control list
+    - com.apple.FinderInfo: Finder metadata (type/creator codes)
+
+    Args:
+        path: Path to the file
+
+    Returns:
+        Dict of attribute names to base64-encoded values.
+        Returns empty dict if xattr not available or file inaccessible.
+
+    Note:
+        Values are base64-encoded because extended attributes are
+        arbitrary binary data. Decode and parse as needed (many are
+        binary plists or structured data).
+
+    Example:
+        >>> from pathlib import Path
+        >>> attrs = get_extended_attributes(Path("/path/to/downloaded.pdf"))
+        >>> if "com.apple.quarantine" in attrs:
+        ...     # Decode and parse quarantine info
+        ...     import base64
+        ...     raw = base64.b64decode(attrs["com.apple.quarantine"])
+    """
+    import base64
+
+    try:
+        import xattr
+    except ImportError:
+        # xattr not installed or not available on this platform
+        return {}
+
+    attrs: dict[str, str] = {}
+    try:
+        # List all extended attributes
+        for name in xattr.listxattr(str(path)):
+            try:
+                # xattr library is untyped, but getxattr always returns bytes
+                value = xattr.getxattr(str(path), name)  # type: ignore[reportUnknownMemberType]
+                # Base64 encode since values are arbitrary binary data
+                attrs[name] = base64.b64encode(value).decode("ascii")  # type: ignore[reportUnknownArgumentType]
+            except OSError:
+                # Skip attributes we can't read (permissions, etc.)
+                pass
+    except (OSError, PermissionError):
+        # File inaccessible or xattr operations not supported
+        pass
+
+    return attrs
+
+
 def migrate_provenance_fields(provenance: dict) -> dict:
     """
     Migrate old provenance field names to new naming convention.
