@@ -59,6 +59,7 @@ LOG_FOLDER_TO_PATH: dict[str, str] = {
     "AirDrop Hash": "Users/_user/Library/Sharing/AirDropHashDB",
     "Bash History": "Users/_user",
     "Zsh History": "Users/_user",
+    "Zsh Sessions": "Users/_user/.zsh_sessions",
     "Recent Items": "Users/_user/Library/Application Support/com.apple.sharedfilelist",
     "Recent Application Documents": "Users/_user/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments",
     "Spotlight Shortcuts": "Users/_user/Library/Application Support/com.apple.spotlight",
