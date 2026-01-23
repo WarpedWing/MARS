@@ -682,6 +682,38 @@ class ExportPackager:
 
         return result
 
+    def _fix_biome_multi_path(self, resolved_dir: str, filename: str) -> str:
+        """Fix _multi paths for Biome-style databases.
+
+        Biome databases have subdirectory names embedded in the filename
+        (e.g., IntelligencePlatform.Entity-fullRebuild.sqlite3). When the
+        canonical path has _multi as a placeholder, we can extract the
+        proper subdirectory from the filename.
+
+        Args:
+            resolved_dir: Resolved directory path (may contain /_multi/)
+            filename: Database filename
+
+        Returns:
+            Fixed directory path with proper subdirectory instead of _multi
+        """
+        # Only fix paths that have _multi and are in Biome/databases or similar patterns
+        if "/_multi" not in resolved_dir:
+            return resolved_dir
+
+        # Check if this is a Biome-style path
+        if "/Biome/databases/_multi" in resolved_dir:
+            # Extract subdirectory from filename
+            # Pattern: IntelligencePlatform.Entity-fullRebuild.sqlite3 → IntelligencePlatform.Entity
+            # Pattern: Siri.PostSiriEngagement.Indexes.sqlite3 → Siri.PostSiriEngagement.Indexes
+            stem = Path(filename).stem  # Remove .sqlite3
+            # If has "-fullRebuild" or similar suffix, remove it
+            subdir = stem.rsplit("-", 1)[0] if "-" in stem else stem
+            # Replace _multi with extracted subdirectory
+            return resolved_dir.replace("/_multi", f"/{subdir}")
+
+        return resolved_dir
+
     def _extract_macos_path(self, original_path: str) -> str | None:
         """Extract macOS path from original_source path.
 
@@ -976,6 +1008,8 @@ class ExportPackager:
 
                     # Resolve wildcards in canonical dir using provenance data
                     resolved_dir = self._resolve_canonical_dir(canonical_dir_str, username, original_path, sub_profiles)
+                    # Fix Biome-style _multi paths where subdir can be extracted from filename
+                    resolved_dir = self._fix_biome_multi_path(resolved_dir, canonical_filename)
 
                     # Disambiguate filename if exporting to _multi folder
                     export_filename = self._disambiguate_multi_filename(canonical_filename, sub_profiles, resolved_dir)
@@ -1046,6 +1080,8 @@ class ExportPackager:
 
             # Resolve wildcards in canonical dir using provenance data
             resolved_dir = self._resolve_canonical_dir(canonical_dir_str, username, original_path, profile_list)
+            # Fix Biome-style _multi paths where subdir can be extracted from filename
+            resolved_dir = self._fix_biome_multi_path(resolved_dir, canonical_filename)
 
             # Disambiguate filename if exporting to _multi folder
             export_filename = self._disambiguate_multi_filename(canonical_filename, profile_list, resolved_dir)
@@ -1691,29 +1727,62 @@ class ExportPackager:
         Returns:
             Relative macOS path string, or None if folder not in mapping (should skip)
         """
-        # Try to find in provenance (exemplar files have this)
+
+        # Helper to extract clean path from source_path
+        def _extract_clean_path(source: str) -> str:
+            # Extract path after dfvfs temp folder
+            # Pattern: /var/folders/.../mars_dfvfs_export_.../actual/path
+            if "mars_dfvfs_export_" in source:
+                parts = source.split("/")
+                for i, part in enumerate(parts):
+                    if part.startswith("mars_dfvfs_export_"):
+                        real_path = "/".join(parts[i + 1 :])
+                        return real_path.lstrip("/")
+            # Fallback: strip leading / and return
+            return source.lstrip("/")
+
+        # Helper to extract username from source path
+        def _extract_username_from_path(source: str) -> str | None:
+            if "Users/" in source:
+                parts = source.split("/")
+                try:
+                    user_idx = parts.index("Users")
+                    if user_idx + 1 < len(parts):
+                        return parts[user_idx + 1]
+                except ValueError:
+                    pass
+            return None
+
+        # Try to find in provenance (exemplar and TM candidate files have this)
         if provenance and "files" in provenance:
+            # First pass: exact filename match
             for file_info in provenance["files"]:
-                if file_info.get("original_filename") == file_path.name:
+                # Check both original_filename (exemplar) and filename (TM candidate)
+                prov_filename = file_info.get("original_filename") or file_info.get("filename")
+                if prov_filename == file_path.name:
                     # Check for relative_path first (clean path)
                     if "relative_path" in file_info:
                         return file_info["relative_path"]
                     if "source_path" in file_info:
-                        source = file_info["source_path"]
-                        # Extract path after dfvfs temp folder
-                        # Pattern: /var/folders/.../mars_dfvfs_export_.../actual/path
-                        if "mars_dfvfs_export_" in source:
-                            # Find the temp folder marker and take path after it
-                            parts = source.split("/")
-                            for i, part in enumerate(parts):
-                                if part.startswith("mars_dfvfs_export_"):
-                                    # Everything after this is the real path
-                                    real_path = "/".join(parts[i + 1 :])
-                                    return real_path.lstrip("/")
-                        # Fallback: strip leading / and return
-                        return source.lstrip("/")
+                        return _extract_clean_path(file_info["source_path"])
 
-        # No provenance - use folder name mapping (candidate carved files)
+            # Second pass: partial match for TM files with timestamp suffixes
+            # e.g., "Zsh_Sessions_2026-01-19-181919.historynew" → match source_path containing ".historynew"
+            for file_info in provenance["files"]:
+                source_path = file_info.get("source_path", "")
+                if source_path:
+                    # Match by file extension or stem
+                    source_filename = Path(source_path).name
+                    # Check if the actual filename's extension matches and stem is related
+                    # TM files have pattern: {name}_{timestamp}.{ext}
+                    if (
+                        file_path.suffix
+                        and file_path.suffix == Path(source_filename).suffix
+                        and file_path.stem.startswith(folder.name.replace(" ", "_"))
+                    ):
+                        return _extract_clean_path(source_path)
+
+        # No provenance match - use folder name mapping (candidate carved files)
         folder_name = folder.name
         username = None
 
@@ -1729,6 +1798,16 @@ class ExportPackager:
 
         if folder_name in LOG_FOLDER_TO_PATH:
             base_path = LOG_FOLDER_TO_PATH[folder_name]
+
+            # If _user placeholder and no username from folder name, try provenance
+            if "_user" in base_path and not username and provenance and "files" in provenance:
+                for file_info in provenance["files"]:
+                    source = file_info.get("source_path", "")
+                    extracted = _extract_username_from_path(source)
+                    if extracted:
+                        username = extracted
+                        break
+
             # Replace _user placeholder with actual username
             if username and "_user" in base_path:
                 base_path = base_path.replace("_user", username)
