@@ -196,7 +196,7 @@ class LFOrchestrator:
         # Create unified progress for all 7 phases
         with create_standard_progress(
             label="",
-            header_title="Lost & Found Processing",
+            header_title="Candidate Processing",
             header_subtitle=f"{len(databases_with_lf)} databases ({lf_count} with LF tables)",
             show_time="elapsed",
             console=richConsole,
